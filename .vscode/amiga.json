@@ -1,0 +1,5 @@
+{
+    "program": "out/nau_dx.exe",
+    "includePath": [ "${workspaceFolder}" ],
+    "defines": []
+}
