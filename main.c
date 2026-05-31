@@ -12,6 +12,7 @@
 
 #include "nau_dx.h"
 #include "gfx.h"
+#include "gfx_ship_anim.h"
 
 // ============================================================================
 // SYSTEM
@@ -203,6 +204,43 @@ static void DrawPixel(UBYTE* screen_mem, short x, short y, UBYTE colorIdx) {
     }
 }
 
+// Draw animated ship (32x24) - 5 bitplanes, full colour from Nau.png palette
+static void DrawShipAnim(UBYTE* screen_mem, short x, short y, UBYTE frame) {
+    (void)frame; // reserved for engine animation
+    if (x <= -32 || x >= SCREEN_W || y <= -24 || y >= SCREEN_H) return;
+    UWORD shift = (UWORD)(x & 15);
+    UWORD rows  = SHIP_ANIM_HEIGHT;
+    const UWORD* mask = SHIP_MASK;
+    if (y < 0) {
+        UWORD skip = (UWORD)(-y);
+        mask += skip * 2;
+        rows  = (rows > skip) ? rows - skip : 0;
+        y = 0;
+    }
+    if (rows == 0) return;
+    UWORD wx = (UWORD)(x < 0 ? 0 : x) >> 4;
+    for (UWORD row = 0; row < rows; row++) {
+        UWORD m0 = mask[row*2], m1 = mask[row*2+1];
+        UWORD mv0 = m0 >> shift;
+        UWORD mv1 = shift ? (UWORD)((m0 << (16-shift)) | (m1 >> shift)) : m1;
+        UWORD mv2 = shift ? (UWORD)(m1 << (16-shift)) : 0;
+        UWORD ry   = (UWORD)y + row;
+        UWORD base = ry * (ROW_BYTES / 2) + wx;
+        for (int p = 0; p < 5; p++) {
+            const UWORD* pd = SHIP_PLANES[p] + (mask - SHIP_MASK);
+            UWORD d0 = pd[row*2], d1 = pd[row*2+1];
+            UWORD dv0 = d0 >> shift;
+            UWORD dv1 = shift ? (UWORD)((d0 << (16-shift)) | (d1 >> shift)) : d1;
+            UWORD dv2 = shift ? (UWORD)(d1 << (16-shift)) : 0;
+            UWORD* pl = (UWORD*)(screen_mem + p * PLANE_BYTES);
+            pl[base]   = (UWORD)((pl[base]   & ~mv0) | (dv0 & mv0));
+            pl[base+1] = (UWORD)((pl[base+1] & ~mv1) | (dv1 & mv1));
+            if (wx + 2 < ROW_BYTES / 2)
+                pl[base+2] = (UWORD)((pl[base+2] & ~mv2) | (dv2 & mv2));
+        }
+    }
+}
+
 static void RenderFrame(UBYTE* screen_mem); // defined after globals
 
 // ============================================================================
@@ -250,53 +288,57 @@ __attribute__((always_inline)) inline USHORT* copSetPlanes(UBYTE bplStart, USHOR
 // Biome 3: Fire   - reds/oranges
 // Biome 4: Tech   - purples/teals
 
+// Ship palette (slots 1-12, from Nau.png):
+// 1=#112 2=#224 3=#346 4=#468 5=#68A  <- dark/mid/light blue-grey (hull)
+// 6=#311 7=#631 8=#B51 9=#FA3         <- rust/orange/yellow (accents)
+// 10=#031 11=#9AC 12=#DEF             <- dark green, light grey, near-white
 static const UWORD g_Palette[5][32] = {
     // Biome 0: Rocky
-    { 0x0000,                       // 0  background (black)
-      0x0AAA, 0x0888, 0x0FFF,       // 1-3 stars (dim, med, bright)
-      0x0F00, 0x0F80, 0x0FF0, 0x0880, // 4-7 ship (red, orange, yellow, dark)
-      0x0AAA, 0x0666, 0x0444, 0x0888, // 8-11 wall rocky greys
-      0x0FFF, 0x0CCC, 0x0999, 0x0555, // 12-15 wall highlights
-      0x0F00, 0x0F40, 0x0FA0, 0x0FF0, // 16-19 enemy basic (cyan->replaced), fast
-      0x0088, 0x00FF, 0x044F, 0x00AA, // 20-23 enemy heavy (grey), diver (green)
-      0x0F80, 0x0FA0, 0x0FFF, 0x0AAA, // 24-27 enemy bomber (white), boss
-      0x0F00, 0x0F44, 0x0FF0, 0x0888 }, // 28-31 shot/explosion, spare
+    { 0x0000,                          // 0  background (black)
+      0x0112, 0x0224, 0x0346,          // 1-3  ship hull dark
+      0x0468, 0x068A, 0x0311, 0x0631, // 4-7  ship hull mid + rust
+      0x0B51, 0x0FA3, 0x0031, 0x09AC, // 8-11 ship orange/yellow/green/grey
+      0x0DEF, 0x0AAA, 0x0888, 0x0FFF, // 12-15 near-white, star greys
+      0x0F00, 0x0F40, 0x0FA0, 0x0FF0, // 16-19 enemy basic
+      0x0088, 0x00FF, 0x044F, 0x00AA, // 20-23 enemy heavy/diver
+      0x0F80, 0x0FA0, 0x0FFF, 0x0AAA, // 24-27 enemy bomber/boss
+      0x0F00, 0x0F44, 0x0FF0, 0x0888 }, // 28-31 shot/explosion
     // Biome 1: Ice
     { 0x0001,
-      0x0337, 0x0669, 0x0FFF,
-      0x0F00, 0x0F80, 0x0FF0, 0x0880,
-      0x066F, 0x044C, 0x0228, 0x088F,
-      0x0ADF, 0x08BF, 0x066C, 0x044A,
+      0x0112, 0x0224, 0x0346,
+      0x0468, 0x068A, 0x0311, 0x0631,
+      0x0B51, 0x0FA3, 0x0031, 0x09AC,
+      0x0DEF, 0x08BF, 0x066C, 0x0FFF,
       0x00FF, 0x04FF, 0x08FF, 0x0CFF,
       0x0088, 0x00FF, 0x044F, 0x00AA,
       0x0F80, 0x0FA0, 0x0FFF, 0x0AAA,
       0x0F00, 0x0F44, 0x0FF0, 0x0888 },
     // Biome 2: Forest
     { 0x0010,
-      0x0484, 0x0686, 0x0AFA,
-      0x0F00, 0x0F80, 0x0FF0, 0x0880,
-      0x0460, 0x0240, 0x0120, 0x0680,
-      0x0AF0, 0x08C0, 0x0690, 0x0460,
+      0x0112, 0x0224, 0x0346,
+      0x0468, 0x068A, 0x0311, 0x0631,
+      0x0B51, 0x0FA3, 0x0031, 0x09AC,
+      0x0DEF, 0x08C0, 0x0690, 0x0AF0,
       0x00FF, 0x04FF, 0x08FF, 0x0CFF,
       0x0088, 0x00FF, 0x044F, 0x00AA,
       0x0F80, 0x0FA0, 0x0FFF, 0x0AAA,
       0x0F00, 0x0F44, 0x0FF0, 0x0888 },
     // Biome 3: Fire
     { 0x0100,
-      0x0844, 0x0A66, 0x0FFF,
-      0x0F00, 0x0F80, 0x0FF0, 0x0880,
-      0x0A20, 0x0800, 0x0600, 0x0C40,
-      0x0FA0, 0x0F60, 0x0F20, 0x0C00,
+      0x0112, 0x0224, 0x0346,
+      0x0468, 0x068A, 0x0311, 0x0631,
+      0x0B51, 0x0FA3, 0x0031, 0x09AC,
+      0x0DEF, 0x0F60, 0x0F20, 0x0FA0,
       0x00FF, 0x04FF, 0x08FF, 0x0CFF,
       0x0088, 0x00FF, 0x044F, 0x00AA,
       0x0F80, 0x0FA0, 0x0FFF, 0x0AAA,
       0x0F00, 0x0F44, 0x0FF0, 0x0888 },
     // Biome 4: Tech
     { 0x0001,
-      0x0448, 0x0668, 0x0AAF,
-      0x0F00, 0x0F80, 0x0FF0, 0x0880,
-      0x0248, 0x0136, 0x0024, 0x046A,
-      0x08AF, 0x068C, 0x046A, 0x024A,
+      0x0112, 0x0224, 0x0346,
+      0x0468, 0x068A, 0x0311, 0x0631,
+      0x0B51, 0x0FA3, 0x0031, 0x09AC,
+      0x0DEF, 0x068C, 0x046A, 0x08AF,
       0x00FF, 0x04FF, 0x08FF, 0x0CFF,
       0x0088, 0x00FF, 0x044F, 0x00AA,
       0x0F80, 0x0FA0, 0x0FFF, 0x0AAA,
@@ -606,12 +648,14 @@ static USHORT* BuildCopperList(USHORT* cop, const UBYTE** planes, int biome) {
 
 static void RenderFrame(UBYTE* screen_mem) {
     ClearGameArea(screen_mem);
-    for (int i = 0; i < N_STARS_1; i++) DrawPixel(screen_mem, g_Stars1[i].x, g_Stars1[i].y, 1);
-    for (int i = 0; i < N_STARS_2; i++) DrawPixel(screen_mem, g_Stars2[i].x, g_Stars2[i].y, 2);
-    for (int i = 0; i < N_STARS_3; i++) DrawPixel(screen_mem, g_Stars3[i].x, g_Stars3[i].y, 3);
+    for (int i = 0; i < N_STARS_1; i++) DrawPixel(screen_mem, g_Stars1[i].x, g_Stars1[i].y, 13);
+    for (int i = 0; i < N_STARS_2; i++) DrawPixel(screen_mem, g_Stars2[i].x, g_Stars2[i].y, 14);
+    for (int i = 0; i < N_STARS_3; i++) DrawPixel(screen_mem, g_Stars3[i].x, g_Stars3[i].y, 15);
     if (g_GameState == GS_PLAYING || g_GameState == GS_GAMEOVER) {
         if (!g_ShipExploding) {
-            DrawBob16(screen_mem, g_ShipMask, g_ShipWhite, g_ShipX, g_ShipY, 0x07, 16);
+            // Animate ship based on frame counter (cycles through 4 frames)
+            UBYTE animFrame = (UBYTE)((g_FrameCounter >> 2) & 3);
+            DrawShipAnim(screen_mem, g_ShipX, g_ShipY, animFrame);
         }
         for (int i = 0; i < MAX_ENEMIES; i++) {
             TEnemy* e = &g_Enemies[i];

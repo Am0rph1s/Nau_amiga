@@ -21,9 +21,9 @@
 #define HUD_X           272
 #define HUD_W           48
 
-// --- Player ship ------------------------------------------------------------
+// --- Player ship (Animated 32x24) -------------------------------------------
 #define SHIP_W          32
-#define SHIP_H          20
+#define SHIP_H          24
 #define SHIP_SPEED_X    8
 #define SHIP_SPEED_Y    8
 #define SHIP_MIN_X      (GAME_X0 + 2)
@@ -31,11 +31,26 @@
 #define SHIP_MIN_Y      8
 #define SHIP_MAX_Y      (GAME_H - SHIP_H - 8)
 #define SHIP_SPAWN_X    (GAME_X0 + GAME_W/2 - SHIP_W/2)
-#define SHIP_SPAWN_Y    (GAME_H - SHIP_H - 24)
-#define SHIP_HIT_OX     4
-#define SHIP_HIT_OY     4
-#define SHIP_HIT_W      (SHIP_W - 8)
-#define SHIP_HIT_H      (SHIP_H - 8)
+#define SHIP_SPAWN_Y    (GAME_H - SHIP_H - 32)
+#define SHIP_HIT_OX     6
+#define SHIP_HIT_OY     6
+#define SHIP_HIT_W      (SHIP_W - 12)
+#define SHIP_HIT_H      (SHIP_H - 12)
+
+// --- NEW: Xenon 2 style ship (32x24) ----------------------------------------
+#define SHIP_NEW_W      32
+#define SHIP_NEW_H      24
+#define SHIP_NEW_WW     2       // width in words
+
+// --- NEW: Multi-size enemies (Xenon 2 style) -------------------------------
+#define ENEMY_SMALL_W   16
+#define ENEMY_SMALL_H   16
+#define ENEMY_MEDIUM_W  24
+#define ENEMY_MEDIUM_H  24
+#define ENEMY_LARGE_W   32
+#define ENEMY_LARGE_H   32
+#define ENEMY_BOSS_W    48
+#define ENEMY_BOSS_H    40
 
 // --- Player shots -----------------------------------------------------------
 #define MAX_SHOTS       4
