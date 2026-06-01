@@ -13,6 +13,7 @@
 #include "nau_dx.h"
 #include "gfx.h"
 #include "gfx_ship_anim.h"
+#include "gfx_ship_white.h"
 
 // ============================================================================
 // SYSTEM
@@ -204,31 +205,26 @@ static void DrawPixel(UBYTE* screen_mem, short x, short y, UBYTE colorIdx) {
     }
 }
 
-// Draw animated ship (32x24) - 5 bitplanes, full colour from Nau.png palette
+// Draw white ship (32x24) - 4 bitplanes, greyscale
 static void DrawShipAnim(UBYTE* screen_mem, short x, short y, UBYTE frame) {
-    (void)frame; // reserved for engine animation
+    (void)frame;
     if (x <= -32 || x >= SCREEN_W || y <= -24 || y >= SCREEN_H) return;
     UWORD shift = (UWORD)(x & 15);
-    UWORD rows  = SHIP_ANIM_HEIGHT;
-    const UWORD* mask = SHIP_MASK;
-    if (y < 0) {
-        UWORD skip = (UWORD)(-y);
-        mask += skip * 2;
-        rows  = (rows > skip) ? rows - skip : 0;
-        y = 0;
-    }
+    UWORD rows  = SHIP_W_HEIGHT;
+    UWORD skip  = 0;
+    if (y < 0) { skip = (UWORD)(-y); rows = (UWORD)(SHIP_W_HEIGHT - skip); y = 0; }
     if (rows == 0) return;
     UWORD wx = (UWORD)(x < 0 ? 0 : x) >> 4;
     for (UWORD row = 0; row < rows; row++) {
-        UWORD m0 = mask[row*2], m1 = mask[row*2+1];
-        UWORD mv0 = m0 >> shift;
-        UWORD mv1 = shift ? (UWORD)((m0 << (16-shift)) | (m1 >> shift)) : m1;
-        UWORD mv2 = shift ? (UWORD)(m1 << (16-shift)) : 0;
+        UWORD ri   = row + skip;
+        UWORD m0   = SHIP_W_MASK[ri*2],   m1 = SHIP_W_MASK[ri*2+1];
+        UWORD mv0  = m0 >> shift;
+        UWORD mv1  = shift ? (UWORD)((m0 << (16-shift)) | (m1 >> shift)) : m1;
+        UWORD mv2  = shift ? (UWORD)(m1 << (16-shift)) : 0;
         UWORD ry   = (UWORD)y + row;
         UWORD base = ry * (ROW_BYTES / 2) + wx;
-        for (int p = 0; p < 5; p++) {
-            const UWORD* pd = SHIP_PLANES[p] + (mask - SHIP_MASK);
-            UWORD d0 = pd[row*2], d1 = pd[row*2+1];
+        for (int p = 0; p < 4; p++) {
+            UWORD d0  = SHIP_W_PLANES[p][ri*2], d1 = SHIP_W_PLANES[p][ri*2+1];
             UWORD dv0 = d0 >> shift;
             UWORD dv1 = shift ? (UWORD)((d0 << (16-shift)) | (d1 >> shift)) : d1;
             UWORD dv2 = shift ? (UWORD)(d1 << (16-shift)) : 0;
@@ -590,9 +586,15 @@ static UBYTE ReadJoy() {
 // INTERRUPT HANDLER
 // ============================================================================
 
+static volatile USHORT* g_PendingCop = 0;
+
 static __attribute__((interrupt)) void VBlankHandler() {
     custom->intreq = (1<<INTB_VERTB);
     custom->intreq = (1<<INTB_VERTB); // twice for A4000
+    if (g_PendingCop) {
+        custom->cop1lc = (ULONG)g_PendingCop;
+        g_PendingCop = 0;
+    }
     g_FrameCounter++;
 }
 
@@ -626,10 +628,13 @@ static USHORT* BuildCopperList(USHORT* cop, const UBYTE** planes, int biome) {
     // Bitplane pointers
     cop = copSetPlanes(0, cop, planes, SCREEN_BPL);
 
-    // Load palette
+    // Load biome palette (slots 0, 14-31) and ship greyscale (slots 1-13)
     const UWORD* pal = g_Palette[biome];
-    for (int i = 0; i < 32; i++)
-        cop = copSetColor(cop, i, pal[i]);
+    cop = copSetColor(cop, 0, pal[0]);  // slot 0 = background
+    for (int i = 1; i < 14; i++)
+        cop = copSetColor(cop, i, SHIP_W_PALETTE[i]);  // ship greyscale
+    for (int i = 14; i < 32; i++)
+        cop = copSetColor(cop, i, pal[i]);  // biome colors
 
     // Raster color effects for biome flavor
     // Sky gradient: top 64 lines slightly lighter background
@@ -653,7 +658,6 @@ static void RenderFrame(UBYTE* screen_mem) {
     for (int i = 0; i < N_STARS_3; i++) DrawPixel(screen_mem, g_Stars3[i].x, g_Stars3[i].y, 15);
     if (g_GameState == GS_PLAYING || g_GameState == GS_GAMEOVER) {
         if (!g_ShipExploding) {
-            // Animate ship based on frame counter (cycles through 4 frames)
             UBYTE animFrame = (UBYTE)((g_FrameCounter >> 2) & 3);
             DrawShipAnim(screen_mem, g_ShipX, g_ShipY, animFrame);
         }
@@ -709,9 +713,12 @@ int main() {
     UBYTE* draw_buf = screen_mem;
     UBYTE* show_buf = screen_mem + buf_size;
 
-    // --- Allocate copper list ---
-    USHORT* copper1 = (USHORT*)AllocMem(512, MEMF_CHIP);
-    if (!copper1) { FreeMem(screen_mem, buf_size * 2); CloseLibrary((struct Library*)DOSBase); CloseLibrary((struct Library*)GfxBase); Exit(0); }
+    // --- Allocate double-buffered copper lists ---
+    USHORT* copper1 = (USHORT*)AllocMem(512, MEMF_CHIP | MEMF_CLEAR);
+    USHORT* copper2 = (USHORT*)AllocMem(512, MEMF_CHIP | MEMF_CLEAR);
+    if (!copper1 || !copper2) { FreeMem(screen_mem, buf_size * 2); CloseLibrary((struct Library*)DOSBase); CloseLibrary((struct Library*)GfxBase); Exit(0); }
+    USHORT* cop_show  = copper1;  // currently displayed by Copper
+    USHORT* cop_build = copper2;  // being built by CPU
 
     TakeSystem();
     WaitVbl();
@@ -721,10 +728,10 @@ int main() {
         const UBYTE* planes[SCREEN_BPL];
         for (int p = 0; p < SCREEN_BPL; p++)
             planes[p] = show_buf + p * plane_size;
-        BuildCopperList(copper1, planes, g_CurrentBiome);
+        BuildCopperList(cop_show, planes, g_CurrentBiome);
     }
 
-    custom->cop1lc = (ULONG)copper1;
+    custom->cop1lc = (ULONG)cop_show;
     custom->dmacon = DMAF_BLITTER;
     custom->copjmp1 = 0x7fff;
     custom->dmacon = DMAF_SETCLR | DMAF_MASTER | DMAF_RASTER | DMAF_COPPER | DMAF_BLITTER;
@@ -742,28 +749,31 @@ int main() {
     // MAIN GAME LOOP
     // ========================================================================
     while (!MouseLeft()) {
-        // Wait for new frame
+        // Wait for VBlank - at this point VBlankHandler has already applied
+        // the pending copper list from last iteration
         while (g_FrameCounter == prev_frame) {}
         prev_frame = g_FrameCounter;
 
-        // --- Swap buffers ---
+        // Swap screen buffers: draw_buf was just rendered last frame,
+        // show_buf is what copper was showing. Now show_buf gets the new frame.
         { UBYTE* tmp = draw_buf; draw_buf = show_buf; show_buf = tmp; }
 
-        // --- Update copper to display show_buf ---
+        // Build copper pointing to show_buf (the frame we just rendered)
+        // into the INACTIVE copper buffer
         {
             const UBYTE* planes[SCREEN_BPL];
             for (int p = 0; p < SCREEN_BPL; p++)
                 planes[p] = show_buf + p * plane_size;
-            BuildCopperList(copper1, planes, g_CurrentBiome);
+            BuildCopperList(cop_build, planes, g_CurrentBiome);
         }
-        custom->cop1lc = (ULONG)copper1;
+        // Schedule copper swap at next VBlank
+        { USHORT* tmp = cop_build; cop_build = cop_show; cop_show = tmp; }
+        g_PendingCop = cop_show;
 
-        // --- Render to draw_buf (off-screen) ---
+        // Render next frame into draw_buf (copper is NOT showing this)
         RenderFrame(draw_buf);
 
         // --- Game logic ---
-        WaitLine(0x10);
-
         UBYTE joy = ReadJoy();
 
         // --- Advance star positions (for next frame) ---
@@ -976,6 +986,7 @@ int main() {
 
     FreeMem(screen_mem, buf_size * 2);
     FreeMem(copper1, 512);
+    FreeMem(copper2, 512);
 
     CloseLibrary((struct Library*)DOSBase);
     CloseLibrary((struct Library*)GfxBase);
