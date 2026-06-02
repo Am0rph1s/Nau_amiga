@@ -308,24 +308,25 @@ static void DrawShipAnim(UBYTE* screen_mem, short x, short y, UBYTE frame) {
         UWORD mv2  = shift ? (UWORD)(m1 << (16-shift)) : 0;
         UWORD ry   = (UWORD)y + row;
         UWORD base = ry * (ROW_BYTES / 2) + wx;
-        for (int p = 0; p < 4; p++) {
-            UWORD d0  = SHIP_W_PLANES[p][ri*2], d1 = SHIP_W_PLANES[p][ri*2+1];
-            UWORD dv0 = d0 >> shift;
-            UWORD dv1 = shift ? (UWORD)((d0 << (16-shift)) | (d1 >> shift)) : d1;
-            UWORD dv2 = shift ? (UWORD)(d1 << (16-shift)) : 0;
+        for (int p = 0; p < SCREEN_BPL; p++) {
             UWORD* pl = (UWORD*)(screen_mem + p * PLANE_BYTES);
-            pl[base]   = (UWORD)((pl[base]   & ~mv0) | (dv0 & mv0));
-            pl[base+1] = (UWORD)((pl[base+1] & ~mv1) | (dv1 & mv1));
-            if (wx + 2 < ROW_BYTES / 2)
-                pl[base+2] = (UWORD)((pl[base+2] & ~mv2) | (dv2 & mv2));
-        }
-        // Clear plane 4 where ship covers (ship uses 4 BPL, screen has 5)
-        {
-            UWORD* p4 = (UWORD*)(screen_mem + 4 * PLANE_BYTES);
-            p4[base]   &= ~mv0;
-            p4[base+1] &= ~mv1;
-            if (wx + 2 < ROW_BYTES / 2)
-                p4[base+2] &= ~mv2;
+            if (p < 4) {
+                // Planes 0-3: write ship data
+                UWORD d0  = SHIP_W_PLANES[p][ri*2], d1 = SHIP_W_PLANES[p][ri*2+1];
+                UWORD dv0 = d0 >> shift;
+                UWORD dv1 = shift ? (UWORD)((d0 << (16-shift)) | (d1 >> shift)) : d1;
+                UWORD dv2 = shift ? (UWORD)(d1 << (16-shift)) : 0;
+                pl[base]   = (UWORD)((pl[base]   & ~mv0) | (dv0 & mv0));
+                pl[base+1] = (UWORD)((pl[base+1] & ~mv1) | (dv1 & mv1));
+                if (wx + 2 < ROW_BYTES / 2)
+                    pl[base+2] = (UWORD)((pl[base+2] & ~mv2) | (dv2 & mv2));
+            } else {
+                // Plane 4: clear where ship covers (ship uses 4 BPL, screen has 5)
+                pl[base]   &= ~mv0;
+                pl[base+1] &= ~mv1;
+                if (wx + 2 < ROW_BYTES / 2)
+                    pl[base+2] &= ~mv2;
+            }
         }
     }
 }
