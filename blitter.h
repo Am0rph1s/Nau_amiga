@@ -8,3 +8,4 @@ extern void ClearGameAreaAsm(void* screen_mem);
 extern void DrawParByteBpl0Asm(void* screen_mem, int xb, const UWORD* tile, int scroll, int half);
 extern void DrawBob16AlignedAsm(void* screen_mem, const UWORD* mask, const UWORD* data, int xword, int y, int colorMask, int rows);
 extern void ClearAndParallaxAsm(void* screen_mem, const UWORD* tileSolid, const UWORD* tileDeco, const short* scrolls);
+extern void ParallaxDrawAsm(void* screen_mem, const UWORD* tileSolid, const UWORD* tileDeco, const short* scrolls);

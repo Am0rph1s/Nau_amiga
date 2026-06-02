@@ -177,42 +177,32 @@ static void ParallaxInitWalls(UBYTE* mem) {
 }
 
 static void ParallaxDraw(UBYTE* screen_mem) {
-    UBYTE* p0 = screen_mem;
-    UBYTE* p1 = screen_mem + 1 * PLANE_BYTES;
-    UBYTE* p2 = screen_mem + 2 * PLANE_BYTES;
-    UBYTE* p3 = screen_mem + 3 * PLANE_BYTES;
-    UBYTE* p4 = screen_mem + 4 * PLANE_BYTES;
-
     for (short row = 0; row < SCREEN_H; row++) {
         short t0 = (short)((row - g_ParScroll[0] + PAR_TILE_H * 4) & (PAR_TILE_H - 1));
         short t1 = (short)((row - g_ParScroll[1] + PAR_TILE_H * 4) & (PAR_TILE_H - 1));
         short t2 = (short)((row - g_ParScroll[2] + PAR_TILE_H * 4) & (PAR_TILE_H - 1));
         short t3 = (short)((row - g_ParScroll[3] + PAR_TILE_H * 4) & (PAR_TILE_H - 1));
-
-        UBYTE* b0 = p0 + row * ROW_BYTES;
-        UBYTE* b1 = p1 + row * ROW_BYTES;
-        UBYTE* b2 = p2 + row * ROW_BYTES;
-        UBYTE* b3 = p3 + row * ROW_BYTES;
-        UBYTE* b4 = p4 + row * ROW_BYTES;
-
-        b1[0]=0; b1[1]=0; b1[2]=0; b1[3]=0;
-        b1[32]=0; b1[33]=0; b1[34]=0; b1[35]=0;
-
-        b2[0]=0xFF; b2[1]=0xFF; b2[2]=0xFF; b2[3]=0xFF;
-        b2[32]=0xFF; b2[33]=0xFF; b2[34]=0xFF; b2[35]=0xFF;
-        b3[0]=0xFF; b3[1]=0xFF; b3[2]=0xFF; b3[3]=0xFF;
-        b3[32]=0xFF; b3[33]=0xFF; b3[34]=0xFF; b3[35]=0xFF;
-        b4[0]=0xFF; b4[1]=0xFF; b4[2]=0xFF; b4[3]=0xFF;
-        b4[32]=0xFF; b4[33]=0xFF; b4[34]=0xFF; b4[35]=0xFF;
-
-        b0[0]  = (UBYTE)(g_TileSolid[t3] >> 8);
-        b0[1]  = (UBYTE)(g_TileDeco[t2] & 0xFF);
-        b0[2]  = (UBYTE)(g_TileDeco[t1] >> 8);
-        b0[3]  = (UBYTE)(g_TileDeco[t0] & 0xFF);
-        b0[32] = (UBYTE)(g_TileDeco[t0] >> 8);
-        b0[33] = (UBYTE)(g_TileDeco[t1] & 0xFF);
-        b0[34] = (UBYTE)(g_TileDeco[t2] >> 8);
-        b0[35] = (UBYTE)(g_TileSolid[t3] & 0xFF);
+        int off = row * ROW_BYTES;
+        // Plane 0: tile pattern
+        UBYTE* r = screen_mem + off;
+        r[0]  = (UBYTE)(g_TileSolid[t3] >> 8);
+        r[1]  = (UBYTE)(g_TileDeco[t2] & 0xFF);
+        r[2]  = (UBYTE)(g_TileDeco[t1] >> 8);
+        r[3]  = (UBYTE)(g_TileDeco[t0] & 0xFF);
+        r[32] = (UBYTE)(g_TileDeco[t0] >> 8);
+        r[33] = (UBYTE)(g_TileDeco[t1] & 0xFF);
+        r[34] = (UBYTE)(g_TileDeco[t2] >> 8);
+        r[35] = (UBYTE)(g_TileSolid[t3] & 0xFF);
+        // Plane 1: must be 0 (sprites OR into it)
+        UBYTE* r1 = screen_mem + PLANE_BYTES + off;
+        *(ULONG*)&r1[0] = 0;
+        *(ULONG*)&r1[32] = 0;
+        // Planes 2-4: must be 0xFF (sprites OR into them)
+        for (int p = 2; p < SCREEN_BPL; p++) {
+            UBYTE* rp = screen_mem + p * PLANE_BYTES + off;
+            *(ULONG*)&rp[0] = 0xFFFFFFFF;
+            *(ULONG*)&rp[32] = 0xFFFFFFFF;
+        }
     }
 }
 

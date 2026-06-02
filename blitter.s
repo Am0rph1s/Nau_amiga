@@ -185,6 +185,119 @@ ClearGameAreaAsm:
         rts
 
 | ============================================================
+| void ParallaxDrawAsm(void* screen_mem,
+|                      const UWORD* tileSolid,
+|                      const UWORD* tileDeco,
+|                      const short* scrolls)
+|
+| Restores wall bytes on planes 1-4 and writes tile pattern on plane 0.
+| Plane 1: bytes 0-3,32-35 = 0x00.  Planes 2-4: bytes 0-3,32-35 = 0xFF.
+| Plane 0: 8 tile bytes per row from tileSolid/tileDeco arrays.
+| Stack (after movem 48 bytes): 52=screen, 56=tileSolid, 60=tileDeco, 64=scrolls
+| ============================================================
+        .global ParallaxDrawAsm
+ParallaxDrawAsm:
+        movem.l d0-d7/a0-a5,-(sp)      | 12 regs = 48 bytes
+
+        move.l  52(sp),a0               | a0 = screen_mem (plane 0 base)
+        move.l  56(sp),a2               | a2 = tileSolid
+        move.l  60(sp),a3               | a3 = tileDeco
+        move.l  64(sp),a4               | a4 = scrolls
+
+        | --- PLANE 1: bytes 0-3 = 0, bytes 32-35 = 0 (256 rows) ---
+        move.l  a0,a1
+        lea     10240(a1),a1            | a1 = plane 1
+        move.w  #255,d0
+.pd_p1:
+        clr.l   (a1)                    | bytes 0-3 = 0
+        clr.l   32(a1)                  | bytes 32-35 = 0
+        lea     40(a1),a1
+        dbra    d0,.pd_p1
+
+        | --- PLANES 2,3,4: bytes 0-3 = FF, bytes 32-35 = FF ---
+        | a1 is now at plane 2 base
+        moveq   #2,d1                   | 3 planes
+.pd_hp_plane:
+        move.w  #255,d0
+.pd_hp_row:
+        move.l  #0xFFFFFFFF,(a1)        | bytes 0-3
+        move.l  #0xFFFFFFFF,32(a1)      | bytes 32-35
+        lea     40(a1),a1
+        dbra    d0,.pd_hp_row
+        dbra    d1,.pd_hp_plane
+
+        | --- PLANE 0: tile pattern ---
+        | Load biased scroll values: bias = 256 - scroll (so index = (row+bias) & 63)
+        move.w  (a4),d4
+        neg.w   d4
+        addi.w  #256,d4                 | d4 = bias0
+        move.w  2(a4),d5
+        neg.w   d5
+        addi.w  #256,d5                 | d5 = bias1
+        move.w  4(a4),d6
+        neg.w   d6
+        addi.w  #256,d6                 | d6 = bias2
+        move.w  6(a4),d7
+        neg.w   d7
+        addi.w  #256,d7                 | d7 = bias3
+
+        move.l  a0,a1                   | a1 = plane 0 base
+        move.w  #255,d3                 | 256 rows
+        moveq   #0,d0                   | row = 0
+
+.pd_p0_row:
+        | t3 index -> tileSolid[t3]
+        move.w  d0,d1
+        add.w   d7,d1
+        andi.w  #63,d1
+        add.w   d1,d1                   | word offset
+        move.w  (a2,d1.w),d2           | d2 = tileSolid[t3]
+        | byte 0 = high byte, byte 35 = low byte
+        move.b  d2,35(a1)
+        lsr.w   #8,d2
+        move.b  d2,(a1)
+
+        | t2 index -> tileDeco[t2]
+        move.w  d0,d1
+        add.w   d6,d1
+        andi.w  #63,d1
+        add.w   d1,d1
+        move.w  (a3,d1.w),d2           | d2 = tileDeco[t2]
+        | byte 1 = low byte, byte 34 = high byte
+        move.b  d2,1(a1)
+        lsr.w   #8,d2
+        move.b  d2,34(a1)
+
+        | t1 index -> tileDeco[t1]
+        move.w  d0,d1
+        add.w   d5,d1
+        andi.w  #63,d1
+        add.w   d1,d1
+        move.w  (a3,d1.w),d2           | d2 = tileDeco[t1]
+        | byte 2 = high byte, byte 33 = low byte
+        move.b  d2,33(a1)
+        lsr.w   #8,d2
+        move.b  d2,2(a1)
+
+        | t0 index -> tileDeco[t0]
+        move.w  d0,d1
+        add.w   d4,d1
+        andi.w  #63,d1
+        add.w   d1,d1
+        move.w  (a3,d1.w),d2           | d2 = tileDeco[t0]
+        | byte 3 = low byte, byte 32 = high byte
+        move.b  d2,3(a1)
+        lsr.w   #8,d2
+        move.b  d2,32(a1)
+
+        lea     40(a1),a1              | next row
+        addq.w  #1,d0
+        dbra    d3,.pd_p0_row
+
+        movem.l (sp)+,d0-d7/a0-a5
+        rts
+
+| ============================================================
 | void ClearAndParallaxAsm(void* screen_mem,
 |                          const UWORD* tileSolid,
 |                          const UWORD* tileDeco,
