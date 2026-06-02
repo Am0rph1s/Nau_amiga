@@ -116,10 +116,95 @@ __attribute__((always_inline)) inline short MouseRight() { return !((*(volatile 
 #define ROW_BYTES   (SCREEN_W / 8)
 #define PLANE_BYTES (ROW_BYTES * SCREEN_H)
 
+// ============================================================================
+// PARALLAX SCROLL
+// ============================================================================
+
+#define PAR_TILE_H   64
+#define PAR_SPEED_0  1
+#define PAR_SPEED_1  2
+#define PAR_SPEED_2  3
+#define PAR_SPEED_3  4
+
+static UWORD g_TileSolid[PAR_TILE_H];  // dense outer boundary
+static UWORD g_TileDeco [PAR_TILE_H];  // sparser inner wall
+static short g_ParScroll[4];           // scroll offset per wall
+
+static void ParallaxInit(void) {
+    ULONG rng = 0xDEADBEEF;
+    for (int i = 0; i < PAR_TILE_H; i++) {
+        rng = rng * 1664525 + 1013904223;
+        UWORD r1 = (UWORD)(rng >> 16);
+        rng = rng * 1664525 + 1013904223;
+        UWORD r2 = (UWORD)(rng >> 16);
+        rng = rng * 1664525 + 1013904223;
+        UWORD r3 = (UWORD)(rng >> 16);
+        g_TileSolid[i] = r1 & r2;                  // ~25% lit
+        g_TileDeco[i]  = r1 & r2 & r3;             // ~12% lit
+    }
+}
+
+// Draw 8-pixel column at byte offset `xb` within a word
+// xb: byte position (0-39), half: 0=low byte [7:0], 1=high byte [15:8]
+static void DrawParByte(UBYTE* screen_mem, short xb,
+                        const UWORD* tile, short scroll, int half) {
+    short  xword = xb >> 1;
+    UWORD  wmask = half ? 0xFF00 : 0x00FF;
+    UBYTE  shift = (UBYTE)(half ? 8 : 0);
+    for (short row = 0; row < SCREEN_H; row++) {
+        short ti = (short)((row - scroll + PAR_TILE_H * 4) & (PAR_TILE_H - 1));
+        UBYTE  m8 = (UBYTE)((tile[ti] >> shift) & 0xFF);
+        // Expand 8-bit column to 16-bit word half
+        UWORD  hi  = (UWORD)(((UWORD)m8 * 0x0101) & wmask);
+        for (int p = 0; p < SCREEN_BPL; p++) {
+            UWORD* pw = (UWORD*)(screen_mem + p * PLANE_BYTES)
+                      + row * (ROW_BYTES / 2) + xword;
+            UWORD c28 = (28 & (1 << p)) ? wmask : 0;
+            UWORD c29 = (29 & (1 << p)) ? wmask : 0;
+            *pw = (*pw & ~wmask) | (UWORD)((c28 & ~hi) | (c29 & hi));
+        }
+    }
+}
+
+static void ParallaxDraw(UBYTE* screen_mem) {
+    // Byte layout within 16-bit word (big-endian):
+    //   even byte index (0,2,4..) = high byte (bits 15-8) -> half=1
+    //   odd  byte index (1,3,5..) = low  byte (bits  7-0) -> half=0
+    //
+    // Speeds: outer(fastest) -> inner(slowest), stepped 4->3->2->1
+    // Left  (bytes 0..3):  byte0 solid@4  byte1 deco@3  byte2 deco@2  byte3 deco@1
+    // Right (bytes 32..35): mirror
+
+    // Left side
+    DrawParByte(screen_mem,  0, g_TileSolid, g_ParScroll[3], 1); // word0 high, solid, speed 4
+    DrawParByte(screen_mem,  1, g_TileDeco,  g_ParScroll[2], 0); // word0 low,  deco,  speed 3
+    DrawParByte(screen_mem,  2, g_TileDeco,  g_ParScroll[1], 1); // word1 high, deco,  speed 2
+    DrawParByte(screen_mem,  3, g_TileDeco,  g_ParScroll[0], 0); // word1 low,  deco,  speed 1
+
+    // Right side
+    DrawParByte(screen_mem, 32, g_TileDeco,  g_ParScroll[0], 1); // word16 high, deco,  speed 1
+    DrawParByte(screen_mem, 33, g_TileDeco,  g_ParScroll[1], 0); // word16 low,  deco,  speed 2
+    DrawParByte(screen_mem, 34, g_TileDeco,  g_ParScroll[2], 1); // word17 high, deco,  speed 3
+    DrawParByte(screen_mem, 35, g_TileSolid, g_ParScroll[3], 0); // word17 low,  solid, speed 4
+}
+
+static void ParallaxUpdate(void) {
+    static const short speeds[4] = { PAR_SPEED_0, PAR_SPEED_1, PAR_SPEED_2, PAR_SPEED_3 };
+    for (int i = 0; i < 4; i++) {
+        g_ParScroll[i] += speeds[i];
+        if (g_ParScroll[i] >= PAR_TILE_H) g_ParScroll[i] -= PAR_TILE_H;
+    }
+}
+
 static void ClearGameArea(UBYTE* screen_mem) {
-    ULONG* p = (ULONG*)screen_mem;
-    ULONG  n = (PLANE_BYTES * SCREEN_BPL) / 4;
-    while (n--) *p++ = 0;
+    // Clear game area (xword 2..15), skip wall bytes 0-3 left, 32-35 right
+    for (int p = 0; p < SCREEN_BPL; p++) {
+        UWORD* pl = (UWORD*)(screen_mem + p * PLANE_BYTES);
+        for (int row = 0; row < SCREEN_H; row++) {
+            UWORD* r = pl + row * (ROW_BYTES / 2);
+            for (int w = 2; w <= 15; w++) r[w] = 0;
+        }
+    }
 }
 
 static void DrawBob16(UBYTE* screen_mem,
@@ -131,7 +216,7 @@ static void DrawBob16(UBYTE* screen_mem,
     const UWORD* d = data;
     if (y < 0) { UWORD skip = (UWORD)(-y); m += skip; d += skip; rows = (rows > skip) ? rows - skip : 0; y = 0; }
     if (rows == 0) return;
-    UWORD wx = (UWORD)(x < 0 ? 0 : x) >> 4; // word offset in row
+    UWORD wx = (UWORD)(x < 0 ? 0 : x) >> 4;
     for (UWORD row = 0; row < rows; row++) {
         UWORD mv = m[row];
         UWORD dv = d[row];
@@ -140,18 +225,13 @@ static void DrawBob16(UBYTE* screen_mem,
         UWORD dv0 = dv >> shift;
         UWORD dv1 = shift ? (UWORD)(dv << (16 - shift)) : 0;
         UWORD ry   = (UWORD)y + row;
-        UWORD base = ry * (ROW_BYTES / 2) + wx; // word index into plane
+        UWORD base = ry * (ROW_BYTES / 2) + wx;
         for (int p = 0; p < SCREEN_BPL; p++) {
+            if (!(colorMask & (1 << p))) continue;
             UWORD* plane = (UWORD*)(screen_mem + p * PLANE_BYTES);
-            if (colorMask & (1 << p)) {
-                plane[base]   = (UWORD)((plane[base]   & ~mv0) | (dv0 & mv0));
-                if (wx + 1 < ROW_BYTES / 2)
-                    plane[base+1] = (UWORD)((plane[base+1] & ~mv1) | (dv1 & mv1));
-            } else {
-                plane[base]   = (UWORD)(plane[base]   & ~mv0);
-                if (wx + 1 < ROW_BYTES / 2)
-                    plane[base+1] = (UWORD)(plane[base+1] & ~mv1);
-            }
+            plane[base]   = (UWORD)((plane[base]   & ~mv0) | (dv0 & mv0));
+            if (wx + 1 < ROW_BYTES / 2)
+                plane[base+1] = (UWORD)((plane[base+1] & ~mv1) | (dv1 & mv1));
         }
     }
 }
@@ -179,18 +259,12 @@ static void DrawBob32(UBYTE* screen_mem,
         UWORD ry   = (UWORD)y + row;
         UWORD base = ry * (ROW_BYTES / 2) + wx;
         for (int p = 0; p < SCREEN_BPL; p++) {
+            if (!(colorMask & (1 << p))) continue;
             UWORD* plane = (UWORD*)(screen_mem + p * PLANE_BYTES);
-            if (colorMask & (1 << p)) {
-                plane[base]   = (UWORD)((plane[base]   & ~mv0) | (dv0 & mv0));
-                plane[base+1] = (UWORD)((plane[base+1] & ~mv1) | (dv1 & mv1));
-                if (wx + 2 < ROW_BYTES / 2)
-                    plane[base+2] = (UWORD)((plane[base+2] & ~mv2) | (dv2 & mv2));
-            } else {
-                plane[base]   &= ~mv0;
-                plane[base+1] &= ~mv1;
-                if (wx + 2 < ROW_BYTES / 2)
-                    plane[base+2] &= ~mv2;
-            }
+            plane[base]   = (UWORD)((plane[base]   & ~mv0) | (dv0 & mv0));
+            plane[base+1] = (UWORD)((plane[base+1] & ~mv1) | (dv1 & mv1));
+            if (wx + 2 < ROW_BYTES / 2)
+                plane[base+2] = (UWORD)((plane[base+2] & ~mv2) | (dv2 & mv2));
         }
     }
 }
@@ -201,7 +275,6 @@ static void DrawPixel(UBYTE* screen_mem, short x, short y, UBYTE colorIdx) {
     UBYTE bit = (UBYTE)(0x80 >> ((UWORD)x & 7));
     for (int p = 0; p < SCREEN_BPL; p++) {
         if (colorIdx & (1<<p)) screen_mem[p * PLANE_BYTES + off] |=  bit;
-        else                   screen_mem[p * PLANE_BYTES + off] &= ~bit;
     }
 }
 
@@ -275,70 +348,45 @@ __attribute__((always_inline)) inline USHORT* copSetPlanes(UBYTE bplStart, USHOR
 
 // ============================================================================
 // PALETTE - 32 colors, OCS 12-bit RGB
-// Biome palettes: each biome changes sky + wall colors
+// Single fixed palette (no biomes)
 // ============================================================================
-
-// Biome 0: Rocky  - greys/whites
-// Biome 1: Ice    - blues/cyans
-// Biome 2: Forest - greens/yellows
-// Biome 3: Fire   - reds/oranges
-// Biome 4: Tech   - purples/teals
-
-// Ship palette (slots 1-12, from Nau.png):
-// 1=#112 2=#224 3=#346 4=#468 5=#68A  <- dark/mid/light blue-grey (hull)
-// 6=#311 7=#631 8=#B51 9=#FA3         <- rust/orange/yellow (accents)
-// 10=#031 11=#9AC 12=#DEF             <- dark green, light grey, near-white
-static const UWORD g_Palette[5][32] = {
-    // Biome 0: Rocky
-    { 0x0000,                          // 0  background (black)
-      0x0112, 0x0224, 0x0346,          // 1-3  ship hull dark
-      0x0468, 0x068A, 0x0311, 0x0631, // 4-7  ship hull mid + rust
-      0x0B51, 0x0FA3, 0x0031, 0x09AC, // 8-11 ship orange/yellow/green/grey
-      0x0DEF, 0x0AAA, 0x0888, 0x0FFF, // 12-15 near-white, star greys
-      0x0F00, 0x0F40, 0x0FA0, 0x0FF0, // 16-19 enemy basic
-      0x0088, 0x00FF, 0x044F, 0x00AA, // 20-23 enemy heavy/diver
-      0x0F80, 0x0FA0, 0x0FFF, 0x0AAA, // 24-27 enemy bomber/boss
-      0x0F00, 0x0F44, 0x0FF0, 0x0888 }, // 28-31 shot/explosion
-    // Biome 1: Ice
-    { 0x0001,
-      0x0112, 0x0224, 0x0346,
-      0x0468, 0x068A, 0x0311, 0x0631,
-      0x0B51, 0x0FA3, 0x0031, 0x09AC,
-      0x0DEF, 0x08BF, 0x066C, 0x0FFF,
-      0x00FF, 0x04FF, 0x08FF, 0x0CFF,
-      0x0088, 0x00FF, 0x044F, 0x00AA,
-      0x0F80, 0x0FA0, 0x0FFF, 0x0AAA,
-      0x0F00, 0x0F44, 0x0FF0, 0x0888 },
-    // Biome 2: Forest
-    { 0x0010,
-      0x0112, 0x0224, 0x0346,
-      0x0468, 0x068A, 0x0311, 0x0631,
-      0x0B51, 0x0FA3, 0x0031, 0x09AC,
-      0x0DEF, 0x08C0, 0x0690, 0x0AF0,
-      0x00FF, 0x04FF, 0x08FF, 0x0CFF,
-      0x0088, 0x00FF, 0x044F, 0x00AA,
-      0x0F80, 0x0FA0, 0x0FFF, 0x0AAA,
-      0x0F00, 0x0F44, 0x0FF0, 0x0888 },
-    // Biome 3: Fire
-    { 0x0100,
-      0x0112, 0x0224, 0x0346,
-      0x0468, 0x068A, 0x0311, 0x0631,
-      0x0B51, 0x0FA3, 0x0031, 0x09AC,
-      0x0DEF, 0x0F60, 0x0F20, 0x0FA0,
-      0x00FF, 0x04FF, 0x08FF, 0x0CFF,
-      0x0088, 0x00FF, 0x044F, 0x00AA,
-      0x0F80, 0x0FA0, 0x0FFF, 0x0AAA,
-      0x0F00, 0x0F44, 0x0FF0, 0x0888 },
-    // Biome 4: Tech
-    { 0x0001,
-      0x0112, 0x0224, 0x0346,
-      0x0468, 0x068A, 0x0311, 0x0631,
-      0x0B51, 0x0FA3, 0x0031, 0x09AC,
-      0x0DEF, 0x068C, 0x046A, 0x08AF,
-      0x00FF, 0x04FF, 0x08FF, 0x0CFF,
-      0x0088, 0x00FF, 0x044F, 0x00AA,
-      0x0F80, 0x0FA0, 0x0FFF, 0x0AAA,
-      0x0F00, 0x0F44, 0x0FF0, 0x0888 },
+//
+// ColorMask usage:
+//   0x07 = bits 0+1+2  -> boss white parts
+//   0x18 = bits 3+4    -> boss red parts
+//   EnemyColor: 16,17,20,22,24
+//   0x1C = bits 2+3+4  -> player shot
+//   0x1D = bits 0+2+3+4-> enemy shot
+//   0x1E = bits 1+2+3+4-> explosion
+//   Stars: colorIdx 13,14,15
+//   Wall parallax: colorIdx 28 (dark rock), 29 (light rock)
+static const UWORD g_Palette[32] = {
+    0x0000,              //  0  background black
+    // Slots 1-13: nau greyscale (loaded from SHIP_W_PALETTE at runtime)
+    0x0111, 0x0222, 0x0333, 0x0444, 0x0555, 0x0666, 0x0777,
+    0x0888, 0x0999, 0x0AAA, 0x0BBB, 0x0CCC, 0x0DDD,
+    // Slots 14-15: estrelles
+    0x0555,              // 14 star dim
+    0x0AAA,              // 15 star bright
+    // Slots 16-27: enemics (color masks 16,17,20,22,24 + boss 0x07/0x18)
+    0x0F00,              // 16 enemy red
+    0x0F60,              // 17 enemy orange
+    0x0FF0,              // 18 enemy yellow
+    0x0AF0,              // 19 enemy green-yellow
+    0x00FF,              // 20 enemy cyan
+    0x008F,              // 21 enemy blue
+    0x0F0F,              // 22 enemy magenta
+    0x0FAA,              // 23 enemy peach
+    0x0FFF,              // 24 enemy white (boss)
+    0x0888,              // 25 enemy grey
+    0x0F80,              // 26 enemy amber
+    0x0FF8,              // 27 enemy lime
+    // Slots 28-29: parallax wall rock colors
+    0x0321,              // 28 wall dark rock
+    0x0654,              // 29 wall light rock highlight
+    // Slots 30-31: shots + explosió
+    0x0FF0,              // 30 player shot yellow
+    0x0F40,              // 31 explosion orange
 };
 
 // ============================================================================
@@ -602,7 +650,8 @@ static __attribute__((interrupt)) void VBlankHandler() {
 // COPPER LIST BUILD
 // ============================================================================
 
-static USHORT* BuildCopperList(USHORT* cop, const UBYTE** planes, int biome) {
+
+static USHORT* BuildCopperList(USHORT* cop, const UBYTE** planes) {
     const USHORT x     = 129;
     const USHORT width = 320;
     const USHORT height= 256;
@@ -628,18 +677,12 @@ static USHORT* BuildCopperList(USHORT* cop, const UBYTE** planes, int biome) {
     // Bitplane pointers
     cop = copSetPlanes(0, cop, planes, SCREEN_BPL);
 
-    // Load biome palette (slots 0, 14-31) and ship greyscale (slots 1-13)
-    const UWORD* pal = g_Palette[biome];
-    cop = copSetColor(cop, 0, pal[0]);  // slot 0 = background
+    // Load fixed palette: slots 1-13 from ship greyscale, rest from g_Palette
+    cop = copSetColor(cop, 0, g_Palette[0]);
     for (int i = 1; i < 14; i++)
-        cop = copSetColor(cop, i, SHIP_W_PALETTE[i]);  // ship greyscale
+        cop = copSetColor(cop, i, SHIP_W_PALETTE[i]);
     for (int i = 14; i < 32; i++)
-        cop = copSetColor(cop, i, pal[i]);  // biome colors
-
-    // Raster color effects for biome flavor
-    // Sky gradient: top 64 lines slightly lighter background
-    cop = copWaitY(cop, 44);
-    cop = copSetColor(cop, 0, pal[0]);
+        cop = copSetColor(cop, i, g_Palette[i]);
 
     // End copper list
     *cop++ = 0xffff;
@@ -653,6 +696,7 @@ static USHORT* BuildCopperList(USHORT* cop, const UBYTE** planes, int biome) {
 
 static void RenderFrame(UBYTE* screen_mem) {
     ClearGameArea(screen_mem);
+    ParallaxDraw(screen_mem);
     for (int i = 0; i < N_STARS_1; i++) DrawPixel(screen_mem, g_Stars1[i].x, g_Stars1[i].y, 13);
     for (int i = 0; i < N_STARS_2; i++) DrawPixel(screen_mem, g_Stars2[i].x, g_Stars2[i].y, 14);
     for (int i = 0; i < N_STARS_3; i++) DrawPixel(screen_mem, g_Stars3[i].x, g_Stars3[i].y, 15);
@@ -704,6 +748,7 @@ int main() {
 
     InitHiScores();
     ResetGameSession();
+    ParallaxInit();
 
     // --- Allocate screen memory: double buffer (5 bitplanes × 2) ---
     const ULONG plane_size = (SCREEN_W / 8) * SCREEN_H; // 320/8 * 256 = 10240 bytes
@@ -714,8 +759,8 @@ int main() {
     UBYTE* show_buf = screen_mem + buf_size;
 
     // --- Allocate double-buffered copper lists ---
-    USHORT* copper1 = (USHORT*)AllocMem(512, MEMF_CHIP | MEMF_CLEAR);
-    USHORT* copper2 = (USHORT*)AllocMem(512, MEMF_CHIP | MEMF_CLEAR);
+    USHORT* copper1 = (USHORT*)AllocMem(1024, MEMF_CHIP | MEMF_CLEAR);
+    USHORT* copper2 = (USHORT*)AllocMem(1024, MEMF_CHIP | MEMF_CLEAR);
     if (!copper1 || !copper2) { FreeMem(screen_mem, buf_size * 2); CloseLibrary((struct Library*)DOSBase); CloseLibrary((struct Library*)GfxBase); Exit(0); }
     USHORT* cop_show  = copper1;  // currently displayed by Copper
     USHORT* cop_build = copper2;  // being built by CPU
@@ -728,9 +773,8 @@ int main() {
         const UBYTE* planes[SCREEN_BPL];
         for (int p = 0; p < SCREEN_BPL; p++)
             planes[p] = show_buf + p * plane_size;
-        BuildCopperList(cop_show, planes, g_CurrentBiome);
+        BuildCopperList(cop_show, planes);
     }
-
     custom->cop1lc = (ULONG)cop_show;
     custom->dmacon = DMAF_BLITTER;
     custom->copjmp1 = 0x7fff;
@@ -764,7 +808,7 @@ int main() {
             const UBYTE* planes[SCREEN_BPL];
             for (int p = 0; p < SCREEN_BPL; p++)
                 planes[p] = show_buf + p * plane_size;
-            BuildCopperList(cop_build, planes, g_CurrentBiome);
+            BuildCopperList(cop_build, planes);
         }
         // Schedule copper swap at next VBlank
         { USHORT* tmp = cop_build; cop_build = cop_show; cop_show = tmp; }
@@ -777,6 +821,7 @@ int main() {
         UBYTE joy = ReadJoy();
 
         // --- Advance star positions (for next frame) ---
+        ParallaxUpdate();
         for (int i = 0; i < N_STARS_1; i++) {
             if (++g_Stars1[i].y >= GAME_H) {
                 g_Stars1[i].y = 0;
@@ -985,8 +1030,8 @@ int main() {
     FreeSystem();
 
     FreeMem(screen_mem, buf_size * 2);
-    FreeMem(copper1, 512);
-    FreeMem(copper2, 512);
+    FreeMem(copper1, 1024);
+    FreeMem(copper2, 1024);
 
     CloseLibrary((struct Library*)DOSBase);
     CloseLibrary((struct Library*)GfxBase);
