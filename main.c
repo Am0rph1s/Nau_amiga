@@ -14,6 +14,7 @@
 #include "gfx.h"
 #include "gfx_ship_anim.h"
 #include "gfx_ship_white.h"
+#include "blitter.h"
 
 // ============================================================================
 // SYSTEM
@@ -144,48 +145,75 @@ static void ParallaxInit(void) {
     }
 }
 
-// Draw 8-pixel column at byte offset `xb` within a word
-// xb: byte position (0-39), half: 0=low byte [7:0], 1=high byte [15:8]
-static void DrawParByte(UBYTE* screen_mem, short xb,
-                        const UWORD* tile, short scroll, int half) {
+// Draw 8-pixel column at byte offset `xb` — plane 0 only
+// Planes 1-4 are static (init once at startup)
+static void DrawParByteBpl0(UBYTE* screen_mem, short xb,
+                            const UWORD* tile, short scroll, int half) {
     short  xword = xb >> 1;
     UWORD  wmask = half ? 0xFF00 : 0x00FF;
     UBYTE  shift = (UBYTE)(half ? 8 : 0);
+    UWORD* plane0 = (UWORD*)(screen_mem + 0 * PLANE_BYTES);
     for (short row = 0; row < SCREEN_H; row++) {
         short ti = (short)((row - scroll + PAR_TILE_H * 4) & (PAR_TILE_H - 1));
         UBYTE  m8 = (UBYTE)((tile[ti] >> shift) & 0xFF);
-        // Expand 8-bit column to 16-bit word half
         UWORD  hi  = (UWORD)(((UWORD)m8 * 0x0101) & wmask);
-        for (int p = 0; p < SCREEN_BPL; p++) {
-            UWORD* pw = (UWORD*)(screen_mem + p * PLANE_BYTES)
-                      + row * (ROW_BYTES / 2) + xword;
-            UWORD c28 = (28 & (1 << p)) ? wmask : 0;
-            UWORD c29 = (29 & (1 << p)) ? wmask : 0;
-            *pw = (*pw & ~wmask) | (UWORD)((c28 & ~hi) | (c29 & hi));
+        UWORD* pw = plane0 + row * (ROW_BYTES / 2) + xword;
+        // Color 28 (dark):  plane0=0 → clear byte; Color 29 (light): plane0=1 → set byte
+        *pw = (*pw & ~wmask) | hi;
+    }
+}
+
+// One-time init of static wall planes: 2,3,4 = 0xFF, plane 1 stays 0 (MEMF_CLEAR)
+// Call for each buffer after allocation
+static void ParallaxInitWalls(UBYTE* mem) {
+    for (int p = 2; p < SCREEN_BPL; p++) {
+        UBYTE* plane = mem + p * PLANE_BYTES;
+        for (int row = 0; row < SCREEN_H; row++) {
+            UBYTE* r = plane + row * ROW_BYTES;
+            r[0] = r[1] = r[2] = r[3] = 0xFF;
+            r[32] = r[33] = r[34] = r[35] = 0xFF;
         }
     }
 }
 
 static void ParallaxDraw(UBYTE* screen_mem) {
-    // Byte layout within 16-bit word (big-endian):
-    //   even byte index (0,2,4..) = high byte (bits 15-8) -> half=1
-    //   odd  byte index (1,3,5..) = low  byte (bits  7-0) -> half=0
-    //
-    // Speeds: outer(fastest) -> inner(slowest), stepped 4->3->2->1
-    // Left  (bytes 0..3):  byte0 solid@4  byte1 deco@3  byte2 deco@2  byte3 deco@1
-    // Right (bytes 32..35): mirror
+    UBYTE* p0 = screen_mem;
+    UBYTE* p1 = screen_mem + 1 * PLANE_BYTES;
+    UBYTE* p2 = screen_mem + 2 * PLANE_BYTES;
+    UBYTE* p3 = screen_mem + 3 * PLANE_BYTES;
+    UBYTE* p4 = screen_mem + 4 * PLANE_BYTES;
 
-    // Left side
-    DrawParByte(screen_mem,  0, g_TileSolid, g_ParScroll[3], 1); // word0 high, solid, speed 4
-    DrawParByte(screen_mem,  1, g_TileDeco,  g_ParScroll[2], 0); // word0 low,  deco,  speed 3
-    DrawParByte(screen_mem,  2, g_TileDeco,  g_ParScroll[1], 1); // word1 high, deco,  speed 2
-    DrawParByte(screen_mem,  3, g_TileDeco,  g_ParScroll[0], 0); // word1 low,  deco,  speed 1
+    for (short row = 0; row < SCREEN_H; row++) {
+        short t0 = (short)((row - g_ParScroll[0] + PAR_TILE_H * 4) & (PAR_TILE_H - 1));
+        short t1 = (short)((row - g_ParScroll[1] + PAR_TILE_H * 4) & (PAR_TILE_H - 1));
+        short t2 = (short)((row - g_ParScroll[2] + PAR_TILE_H * 4) & (PAR_TILE_H - 1));
+        short t3 = (short)((row - g_ParScroll[3] + PAR_TILE_H * 4) & (PAR_TILE_H - 1));
 
-    // Right side
-    DrawParByte(screen_mem, 32, g_TileDeco,  g_ParScroll[0], 1); // word16 high, deco,  speed 1
-    DrawParByte(screen_mem, 33, g_TileDeco,  g_ParScroll[1], 0); // word16 low,  deco,  speed 2
-    DrawParByte(screen_mem, 34, g_TileDeco,  g_ParScroll[2], 1); // word17 high, deco,  speed 3
-    DrawParByte(screen_mem, 35, g_TileSolid, g_ParScroll[3], 0); // word17 low,  solid, speed 4
+        UBYTE* b0 = p0 + row * ROW_BYTES;
+        UBYTE* b1 = p1 + row * ROW_BYTES;
+        UBYTE* b2 = p2 + row * ROW_BYTES;
+        UBYTE* b3 = p3 + row * ROW_BYTES;
+        UBYTE* b4 = p4 + row * ROW_BYTES;
+
+        b1[0]=0; b1[1]=0; b1[2]=0; b1[3]=0;
+        b1[32]=0; b1[33]=0; b1[34]=0; b1[35]=0;
+
+        b2[0]=0xFF; b2[1]=0xFF; b2[2]=0xFF; b2[3]=0xFF;
+        b2[32]=0xFF; b2[33]=0xFF; b2[34]=0xFF; b2[35]=0xFF;
+        b3[0]=0xFF; b3[1]=0xFF; b3[2]=0xFF; b3[3]=0xFF;
+        b3[32]=0xFF; b3[33]=0xFF; b3[34]=0xFF; b3[35]=0xFF;
+        b4[0]=0xFF; b4[1]=0xFF; b4[2]=0xFF; b4[3]=0xFF;
+        b4[32]=0xFF; b4[33]=0xFF; b4[34]=0xFF; b4[35]=0xFF;
+
+        b0[0]  = (UBYTE)(g_TileSolid[t3] >> 8);
+        b0[1]  = (UBYTE)(g_TileDeco[t2] & 0xFF);
+        b0[2]  = (UBYTE)(g_TileDeco[t1] >> 8);
+        b0[3]  = (UBYTE)(g_TileDeco[t0] & 0xFF);
+        b0[32] = (UBYTE)(g_TileDeco[t0] >> 8);
+        b0[33] = (UBYTE)(g_TileDeco[t1] & 0xFF);
+        b0[34] = (UBYTE)(g_TileDeco[t2] >> 8);
+        b0[35] = (UBYTE)(g_TileSolid[t3] & 0xFF);
+    }
 }
 
 static void ParallaxUpdate(void) {
@@ -197,14 +225,7 @@ static void ParallaxUpdate(void) {
 }
 
 static void ClearGameArea(UBYTE* screen_mem) {
-    // Clear game area (xword 2..15), skip wall bytes 0-3 left, 32-35 right
-    for (int p = 0; p < SCREEN_BPL; p++) {
-        UWORD* pl = (UWORD*)(screen_mem + p * PLANE_BYTES);
-        for (int row = 0; row < SCREEN_H; row++) {
-            UWORD* r = pl + row * (ROW_BYTES / 2);
-            for (int w = 2; w <= 15; w++) r[w] = 0;
-        }
-    }
+    ClearGameAreaAsm(screen_mem);
 }
 
 static void DrawBob16(UBYTE* screen_mem,
@@ -783,6 +804,10 @@ int main() {
     UBYTE* draw_buf = screen_mem;
     UBYTE* show_buf = screen_mem + buf_size;
 
+    // Initialize static wall planes (2-4 = 0xFF, plane 1 = 0) in both buffers
+    ParallaxInitWalls(draw_buf);
+    ParallaxInitWalls(show_buf);
+
     // --- Allocate double-buffered copper lists ---
     USHORT* copper1 = (USHORT*)AllocMem(1024, MEMF_CHIP | MEMF_CLEAR);
     USHORT* copper2 = (USHORT*)AllocMem(1024, MEMF_CHIP | MEMF_CLEAR);
@@ -823,24 +848,24 @@ int main() {
         while (g_FrameCounter == prev_frame) {}
         prev_frame = g_FrameCounter;
 
-        // Swap screen buffers: draw_buf was just rendered last frame,
-        // show_buf is what copper was showing. Now show_buf gets the new frame.
-        { UBYTE* tmp = draw_buf; draw_buf = show_buf; show_buf = tmp; }
+        // Render next frame (copper is showing show_buf, NOT draw_buf)
+        RenderFrame(draw_buf);
 
-        // Build copper pointing to show_buf (the frame we just rendered)
+        // Build copper pointing to draw_buf (the frame we just rendered)
         // into the INACTIVE copper buffer
         {
             const UBYTE* planes[SCREEN_BPL];
             for (int p = 0; p < SCREEN_BPL; p++)
-                planes[p] = show_buf + p * plane_size;
+                planes[p] = draw_buf + p * plane_size;
             BuildCopperList(cop_build, planes);
         }
         // Schedule copper swap at next VBlank
         { USHORT* tmp = cop_build; cop_build = cop_show; cop_show = tmp; }
         g_PendingCop = cop_show;
 
-        // Render next frame into draw_buf (copper is NOT showing this)
-        RenderFrame(draw_buf);
+        // Swap buffers for next frame: the freshly rendered draw_buf becomes
+        // show_buf, the old show_buf becomes the next render target
+        { UBYTE* tmp = draw_buf; draw_buf = show_buf; show_buf = tmp; }
 
         // --- Game logic ---
         UBYTE joy = ReadJoy();
