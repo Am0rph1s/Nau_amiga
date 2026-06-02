@@ -227,11 +227,16 @@ static void DrawBob16(UBYTE* screen_mem,
         UWORD ry   = (UWORD)y + row;
         UWORD base = ry * (ROW_BYTES / 2) + wx;
         for (int p = 0; p < SCREEN_BPL; p++) {
-            if (!(colorMask & (1 << p))) continue;
             UWORD* plane = (UWORD*)(screen_mem + p * PLANE_BYTES);
-            plane[base]   = (UWORD)((plane[base]   & ~mv0) | (dv0 & mv0));
-            if (wx + 1 < ROW_BYTES / 2)
-                plane[base+1] = (UWORD)((plane[base+1] & ~mv1) | (dv1 & mv1));
+            if (colorMask & (1 << p)) {
+                plane[base]   = (UWORD)((plane[base]   & ~mv0) | (dv0 & mv0));
+                if (wx + 1 < ROW_BYTES / 2)
+                    plane[base+1] = (UWORD)((plane[base+1] & ~mv1) | (dv1 & mv1));
+            } else {
+                plane[base]   = (UWORD)(plane[base]   & ~mv0);
+                if (wx + 1 < ROW_BYTES / 2)
+                    plane[base+1] = (UWORD)(plane[base+1] & ~mv1);
+            }
         }
     }
 }
@@ -259,12 +264,18 @@ static void DrawBob32(UBYTE* screen_mem,
         UWORD ry   = (UWORD)y + row;
         UWORD base = ry * (ROW_BYTES / 2) + wx;
         for (int p = 0; p < SCREEN_BPL; p++) {
-            if (!(colorMask & (1 << p))) continue;
             UWORD* plane = (UWORD*)(screen_mem + p * PLANE_BYTES);
-            plane[base]   = (UWORD)((plane[base]   & ~mv0) | (dv0 & mv0));
-            plane[base+1] = (UWORD)((plane[base+1] & ~mv1) | (dv1 & mv1));
-            if (wx + 2 < ROW_BYTES / 2)
-                plane[base+2] = (UWORD)((plane[base+2] & ~mv2) | (dv2 & mv2));
+            if (colorMask & (1 << p)) {
+                plane[base]   = (UWORD)((plane[base]   & ~mv0) | (dv0 & mv0));
+                plane[base+1] = (UWORD)((plane[base+1] & ~mv1) | (dv1 & mv1));
+                if (wx + 2 < ROW_BYTES / 2)
+                    plane[base+2] = (UWORD)((plane[base+2] & ~mv2) | (dv2 & mv2));
+            } else {
+                plane[base]   &= ~mv0;
+                plane[base+1] &= ~mv1;
+                if (wx + 2 < ROW_BYTES / 2)
+                    plane[base+2] &= ~mv2;
+            }
         }
     }
 }
@@ -275,6 +286,7 @@ static void DrawPixel(UBYTE* screen_mem, short x, short y, UBYTE colorIdx) {
     UBYTE bit = (UBYTE)(0x80 >> ((UWORD)x & 7));
     for (int p = 0; p < SCREEN_BPL; p++) {
         if (colorIdx & (1<<p)) screen_mem[p * PLANE_BYTES + off] |=  bit;
+        else                   screen_mem[p * PLANE_BYTES + off] &= ~bit;
     }
 }
 
@@ -306,6 +318,14 @@ static void DrawShipAnim(UBYTE* screen_mem, short x, short y, UBYTE frame) {
             pl[base+1] = (UWORD)((pl[base+1] & ~mv1) | (dv1 & mv1));
             if (wx + 2 < ROW_BYTES / 2)
                 pl[base+2] = (UWORD)((pl[base+2] & ~mv2) | (dv2 & mv2));
+        }
+        // Clear plane 4 where ship covers (ship uses 4 BPL, screen has 5)
+        {
+            UWORD* p4 = (UWORD*)(screen_mem + 4 * PLANE_BYTES);
+            p4[base]   &= ~mv0;
+            p4[base+1] &= ~mv1;
+            if (wx + 2 < ROW_BYTES / 2)
+                p4[base+2] &= ~mv2;
         }
     }
 }
@@ -355,9 +375,8 @@ __attribute__((always_inline)) inline USHORT* copSetPlanes(UBYTE bplStart, USHOR
 //   0x07 = bits 0+1+2  -> boss white parts
 //   0x18 = bits 3+4    -> boss red parts
 //   EnemyColor: 16,17,20,22,24
-//   0x1C = bits 2+3+4  -> player shot
-//   0x1D = bits 0+2+3+4-> enemy shot
-//   0x1E = bits 1+2+3+4-> explosion
+//   0x1E = bits 1+2+3+4-> player/enemy shot (color 30, 0x0FF0 yellow)
+//   0x1F = bits 0+1+2+3+4 -> explosion (color 31, 0x0F40 orange)
 //   Stars: colorIdx 13,14,15
 //   Wall parallax: colorIdx 28 (dark rock), 29 (light rock)
 static const UWORD g_Palette[32] = {
@@ -469,18 +488,23 @@ static const TLevelConfig g_Levels[ENDGAME_FINAL_LEVEL] = {
 // STARFIELD
 // ============================================================================
 
+// Stars avoid wall zone: 16px padding on each side of game area
+#define STAR_X0 (GAME_X0 + WALL_L_W)       // 32
+#define STAR_W  (GAME_W - WALL_L_W * 2)    // 224
+#define STAR_X1 (STAR_X0 + STAR_W)          // 256
+
 static void InitStarfield() {
     // Pseudo-random init using level + index as seed
     for (int i = 0; i < N_STARS_1; i++) {
-        g_Stars1[i].x = (short)(((i * 37 + 13) % GAME_W) + GAME_X0);
+        g_Stars1[i].x = (short)(((i * 37 + 13) % STAR_W) + STAR_X0);
         g_Stars1[i].y = (short)((i * 29 + 7) % GAME_H);
     }
     for (int i = 0; i < N_STARS_2; i++) {
-        g_Stars2[i].x = (short)(((i * 53 + 41) % GAME_W) + GAME_X0);
+        g_Stars2[i].x = (short)(((i * 53 + 41) % STAR_W) + STAR_X0);
         g_Stars2[i].y = (short)((i * 17 + 19) % GAME_H);
     }
     for (int i = 0; i < N_STARS_3; i++) {
-        g_Stars3[i].x = (short)(((i * 61 + 23) % GAME_W) + GAME_X0);
+        g_Stars3[i].x = (short)(((i * 61 + 23) % STAR_W) + STAR_X0);
         g_Stars3[i].y = (short)((i * 43 + 11) % GAME_H);
     }
 }
@@ -554,7 +578,7 @@ static void SpawnEnemy(short type) {
     TEnemy* e = &g_Enemies[idx];
     e->active = 1;
     e->type = type;
-    e->x = (short)(GAME_X0 + ((g_WaveSpawned * 37 + 13) % (GAME_W - ENEMY_W)));
+    e->x = (short)(STAR_X0 + ((g_WaveSpawned * 37 + 13) % (STAR_W - ENEMY_W)));
     e->y = GAME_Y0 - ENEMY_H;
     e->vx = 0;
     e->fire_cd = 0;
@@ -576,7 +600,7 @@ static void SpawnBoss(unsigned char flags) {
     TEnemy* e = &g_Enemies[idx];
     e->active = 1;
     e->type = ENEMY_TYPE_BOSS;
-    e->x = (short)(GAME_X0 + GAME_W / 2 - ENEMY_BOSS_W / 2);
+    e->x = (short)(STAR_X0 + STAR_W / 2 - ENEMY_BOSS_W / 2);
     e->y = GAME_Y0 - ENEMY_BOSS_H;
     e->vx = 1;
     e->vy = 1;
@@ -718,18 +742,18 @@ static void RenderFrame(UBYTE* screen_mem) {
         }
         for (int i = 0; i < MAX_SHOTS; i++) {
             if (!g_Shots[i].active) continue;
-            DrawBob16(screen_mem, g_ShotMask, g_ShotData, g_Shots[i].x, g_Shots[i].y, 0x1C, 8);
+            DrawBob16(screen_mem, g_ShotMask, g_ShotData, g_Shots[i].x, g_Shots[i].y, 0x1E, 8);
         }
         for (int i = 0; i < MAX_ENEMY_SHOTS; i++) {
             if (!g_EnemyShots[i].active) continue;
             DrawBob16(screen_mem, g_EShotMask, g_EShotData,
-                      g_EnemyShots[i].x, g_EnemyShots[i].y, 0x1D, 8);
+                      g_EnemyShots[i].x, g_EnemyShots[i].y, 0x1E, 8);
         }
         for (int i = 0; i < MAX_EXPLOSIONS; i++) {
             TExplosion* ex = &g_Explosions[i];
             if (!ex->active) continue;
             UWORD fr = (UWORD)((ex->frame >> 1) & 3);
-            DrawBob16(screen_mem, g_ExpMasks[fr], g_ExpData[fr], ex->x, ex->y, 0x1E, 8);
+            DrawBob16(screen_mem, g_ExpMasks[fr], g_ExpData[fr], ex->x, ex->y, 0x1F, 8);
         }
     }
 }
@@ -825,21 +849,21 @@ int main() {
         for (int i = 0; i < N_STARS_1; i++) {
             if (++g_Stars1[i].y >= GAME_H) {
                 g_Stars1[i].y = 0;
-                g_Stars1[i].x = (short)(((g_Stars1[i].x * 37 + 13) % GAME_W) + GAME_X0);
+                g_Stars1[i].x = (short)(((g_Stars1[i].x * 37 + 13) % STAR_W) + STAR_X0);
             }
         }
         for (int i = 0; i < N_STARS_2; i++) {
             g_Stars2[i].y += (g_FrameCounter & 1) ? 2 : 1;
             if (g_Stars2[i].y >= GAME_H) {
                 g_Stars2[i].y = 0;
-                g_Stars2[i].x = (short)(((g_Stars2[i].x * 53 + 41) % GAME_W) + GAME_X0);
+                g_Stars2[i].x = (short)(((g_Stars2[i].x * 53 + 41) % STAR_W) + STAR_X0);
             }
         }
         for (int i = 0; i < N_STARS_3; i++) {
             g_Stars3[i].y += 3;
             if (g_Stars3[i].y >= GAME_H) {
                 g_Stars3[i].y = 0;
-                g_Stars3[i].x = (short)(((g_Stars3[i].x * 61 + 23) % GAME_W) + GAME_X0);
+                g_Stars3[i].x = (short)(((g_Stars3[i].x * 61 + 23) % STAR_W) + STAR_X0);
             }
         }
 
@@ -940,10 +964,10 @@ int main() {
                         e->y = BOSS_HOLD_Y + (e->boss_vosc & 8 ? 4 : -4);
                         if (e->boss_vosc & 4) {
                             e->x += 1;
-                            if (e->x >= GAME_X1 - ENEMY_BOSS_W - 4) e->x = (short)(GAME_X1 - ENEMY_BOSS_W - 4);
+                            if (e->x >= STAR_X1 - ENEMY_BOSS_W - 4) e->x = (short)(STAR_X1 - ENEMY_BOSS_W - 4);
                         } else {
                             e->x -= 1;
-                            if (e->x <= GAME_X0 + 4) e->x = (short)(GAME_X0 + 4);
+                            if (e->x <= STAR_X0 + 4) e->x = (short)(STAR_X0 + 4);
                         }
                     }
                 } else {
