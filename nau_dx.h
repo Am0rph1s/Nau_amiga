@@ -49,8 +49,6 @@
 #define ENEMY_MEDIUM_H  24
 #define ENEMY_LARGE_W   32
 #define ENEMY_LARGE_H   32
-#define ENEMY_BOSS_W    48
-#define ENEMY_BOSS_H    40
 
 // --- Player shots -----------------------------------------------------------
 #define MAX_SHOTS       4

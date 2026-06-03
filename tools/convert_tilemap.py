@@ -129,12 +129,12 @@ def main():
             f.write('},\n')
         f.write('};\n\n')
 
-        # Tilemap
-        f.write(f'static const UBYTE bg_tilemap[BG_MAP_TOTAL] = {{\n')
+        # Tilemap (UWORD needed when >255 unique tiles)
+        f.write(f'static const UWORD bg_tilemap[BG_MAP_TOTAL] = {{\n')
         for i in range(0, len(tilemap), 16):
             f.write('    ')
             for j in range(i, min(i+16, len(tilemap))):
-                f.write(f'0x{tilemap[j]:02X},')
+                f.write(f'0x{tilemap[j]:04X},')
             f.write('\n')
         f.write('};\n\n')
 

@@ -220,7 +220,7 @@ static const int bg_plane_offs[BG_BPL] = { 0, 2, 4 };
 static void InitTilemapBG(UBYTE* bg_buf) {
     for (int map_row = 0; map_row < BG_MAP_ROWS; map_row++) {
         for (int tx = 0; tx < BG_MAP_COLS; tx++) {
-            UBYTE tile_idx = bg_tilemap[map_row * BG_MAP_COLS + tx];
+            UWORD tile_idx = bg_tilemap[map_row * BG_MAP_COLS + tx];
             const UBYTE* tile = bg_tiles[tile_idx];
             int scr_x = GAME_X0 + tx * BG_TILE_W;
 
