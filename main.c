@@ -912,9 +912,9 @@ int main() {
     // Load tilemap palette into PF1 slots 0-7
     for (int i = 0; i < BG_PAL_AMIGA_COUNT && i < 8; i++)
         g_Palette[i] = bg_pal_amiga[i];
-    // Override slots 6-7 with wall rock colors (dark / light)
+    // Override slots 6-7 with wall rock colors (desert tones)
     g_Palette[6] = 0x0321;  // dark rock
-    g_Palette[7] = 0x0654;  // light rock
+    g_Palette[7] = 0x0753;  // light sand/rock
 
     // --- Allocate screen memory: double buffer (6 bitplanes × 2) ---
     const ULONG plane_size = (SCREEN_W / 8) * SCREEN_H; // 320/8 * 256 = 10240 bytes

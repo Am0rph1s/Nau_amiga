@@ -30,13 +30,13 @@ def pixels_to_planar(pixels, w, h, nplanes):
 
 def main():
     if len(sys.argv) < 2:
-        png_path = os.path.join(os.path.dirname(__file__), '..', 'escenari', 'cano_tileset_b.png')
+        png_path = os.path.join(os.path.dirname(__file__), '..', 'escenari', 'desert_8c.png')
     else:
         png_path = sys.argv[1]
 
     img = Image.open(png_path)
     if img.mode != 'P':
-        img = img.convert('P', palette=Image.Palette.ADAPTIVE, colors=16)
+        img = img.convert('P', palette=Image.Palette.ADAPTIVE, colors=8)
         print(f"Converted to indexed palette ({len(img.getcolors())} colors)")
 
     w, h = img.size
