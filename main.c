@@ -912,9 +912,9 @@ int main() {
     // Load tilemap palette into PF1 slots 0-7
     for (int i = 0; i < BG_PAL_AMIGA_COUNT && i < 8; i++)
         g_Palette[i] = bg_pal_amiga[i];
-    // Override slots 6-7 with wall rock colors (desert tones, free slots)
-    g_Palette[6] = 0x0212;  // dark desert rock
-    g_Palette[7] = 0x0644;  // light desert sand
+    // Override slots 0,7 with wall colors (both free — tilemap uses indices 1-6)
+    g_Palette[0] = 0x0212;  // dark rock
+    g_Palette[7] = 0x0753;  // light sand
 
     // --- Allocate screen memory: double buffer (6 bitplanes × 2) ---
     const ULONG plane_size = (SCREEN_W / 8) * SCREEN_H; // 320/8 * 256 = 10240 bytes
@@ -955,8 +955,9 @@ int main() {
             r0[1] = (UBYTE)(solid & 0xFF);
             r0[34] = (UBYTE)(deco & 0xFF);
             r0[35] = (UBYTE)(solid >> 8);
-            r2[0] = r2[1] = r2[34] = r2[35] = 0xFF;
-            r4[0] = r4[1] = r4[34] = r4[35] = 0xFF;
+            // Planes 2,4: copy plane0 pattern → color indices 0 and 7
+            r2[0] = r0[0]; r2[1] = r0[1]; r2[34] = r0[34]; r2[35] = r0[35];
+            r4[0] = r0[0]; r4[1] = r0[1]; r4[34] = r0[34]; r4[35] = r0[35];
         }
     }
 
