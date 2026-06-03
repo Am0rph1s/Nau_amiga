@@ -232,10 +232,10 @@ static void DrawBorder(UBYTE* screen_mem, short scroll_y) {
             UBYTE* dst = row_ptr + pf2_planes[p] * PLANE_BYTES;
             // Left border: bytes 0-7 (64px)
             for (int b = 0; b < BORDER_W / 8; b++)
-                dst[b] |= mask_row[b];
-            // Right border: bytes 32-39 (last 64px of 320px screen, at x=256)
+                dst[b] = mask_row[b];
+            // Right border: bytes 32-39 (last 64px, at x=256)
             for (int b = 0; b < BORDER_W / 8; b++)
-                dst[32 + b] |= mask_mirror_row[b];
+                dst[32 + b] = mask_mirror_row[b];
         }
         row_ptr += ROW_BYTES;
     }
