@@ -212,8 +212,8 @@ static void ClearGameArea(UBYTE* screen_mem) {
     ClearGameAreaAsm(screen_mem);
 }
 
-// Draw 16px bob on PF2 only (planes 1 and 3)
-// colorMask: bit 0 -> plane 1, bit 1 -> plane 3
+// Draw 16px bob on PF2 only (planes 1,3,5)
+// colorMask: bit 0 -> plane 1, bit 1 -> plane 3, bit 2 -> plane 5
 static void DrawBob16(UBYTE* screen_mem,
                       const UWORD* mask, const UWORD* data,
                       short x, short y, UBYTE colorMask, UWORD rows) {
@@ -225,7 +225,7 @@ static void DrawBob16(UBYTE* screen_mem,
     if (y + (short)rows > SCREEN_H) rows = (UWORD)(SCREEN_H - y);
     if (rows == 0) return;
     UWORD wx = (UWORD)(x < 0 ? 0 : x) >> 4;
-    static const UBYTE pf2_planes[2] = { 1, 3 };
+    static const UBYTE pf2_planes[3] = { 1, 3, 5 };
     for (UWORD row = 0; row < rows; row++) {
         UWORD mv = m[row];
         UWORD dv = d[row];
@@ -235,7 +235,7 @@ static void DrawBob16(UBYTE* screen_mem,
         UWORD dv1 = shift ? (UWORD)(dv << (16 - shift)) : 0;
         UWORD ry   = (UWORD)y + row;
         UWORD base = ry * (ROW_BYTES / 2) + wx;
-        for (int i = 0; i < 2; i++) {
+        for (int i = 0; i < 3; i++) {
             UWORD* plane = (UWORD*)(screen_mem + pf2_planes[i] * PLANE_BYTES);
             if (colorMask & (1 << i)) {
                 plane[base]   = (UWORD)((plane[base]   & ~mv0) | (dv0 & mv0));
@@ -250,8 +250,8 @@ static void DrawBob16(UBYTE* screen_mem,
     }
 }
 
-// Draw 32px bob on PF2 only (planes 1 and 3)
-// colorMask: bit 0 -> plane 1, bit 1 -> plane 3
+// Draw 32px bob on PF2 only (planes 1,3,5)
+// colorMask: bit 0 -> plane 1, bit 1 -> plane 3, bit 2 -> plane 5
 static void DrawBob32(UBYTE* screen_mem,
                       const UWORD* mask, const UWORD* data,
                       short x, short y, UBYTE colorMask) {
@@ -264,7 +264,7 @@ static void DrawBob32(UBYTE* screen_mem,
     if (y + (short)rows > SCREEN_H) rows = (UWORD)(SCREEN_H - y);
     if (rows == 0) return;
     UWORD wx = (UWORD)(x < 0 ? 0 : x) >> 4;
-    static const UBYTE pf2_planes[2] = { 1, 3 };
+    static const UBYTE pf2_planes[3] = { 1, 3, 5 };
     for (UWORD row = 0; row < rows; row++) {
         UWORD m0 = m[row*2],   m1 = m[row*2+1];
         UWORD d0 = d[row*2],   d1 = d[row*2+1];
@@ -276,7 +276,7 @@ static void DrawBob32(UBYTE* screen_mem,
         UWORD dv2 = shift ? (UWORD)(d1 << (16-shift)) : 0;
         UWORD ry   = (UWORD)y + row;
         UWORD base = ry * (ROW_BYTES / 2) + wx;
-        for (int i = 0; i < 2; i++) {
+        for (int i = 0; i < 3; i++) {
             UWORD* plane = (UWORD*)(screen_mem + pf2_planes[i] * PLANE_BYTES);
             if (colorMask & (1 << i)) {
                 plane[base]   = (UWORD)((plane[base]   & ~mv0) | (dv0 & mv0));
@@ -335,6 +335,12 @@ static void DrawBob32_2bpl(UBYTE* screen_mem,
         plo[base+1] = (UWORD)((plo[base+1] & ~mv1) | (lv1 & mv1));
         if (wx + 2 < ROW_BYTES / 2)
             plo[base+2] = (UWORD)((plo[base+2] & ~mv2) | (lv2 & mv2));
+        // Also clear plane 5 (PF2 bit 2) in mask area
+        UWORD* pl5 = (UWORD*)(screen_mem + 5 * PLANE_BYTES);
+        pl5[base]   &= ~mv0;
+        pl5[base+1] &= ~mv1;
+        if (wx + 2 < ROW_BYTES / 2)
+            pl5[base+2] &= ~mv2;
     }
 }
 
@@ -371,21 +377,27 @@ static void DrawBob16_2bpl(UBYTE* screen_mem,
         plo[base]   = (UWORD)((plo[base]   & ~mv0) | (lv0 & mv0));
         if (wx + 1 < ROW_BYTES / 2)
             plo[base+1] = (UWORD)((plo[base+1] & ~mv1) | (lv1 & mv1));
+        // Also clear plane 5 (PF2 bit 2) in mask area
+        UWORD* pl5 = (UWORD*)(screen_mem + 5 * PLANE_BYTES);
+        pl5[base]   &= ~mv0;
+        if (wx + 1 < ROW_BYTES / 2)
+            pl5[base+1] &= ~mv1;
     }
 }
 
-// Draw pixel on PF2 only (planes 1 and 3)
-// colorIdx: bit 0 -> plane 1, bit 1 -> plane 3
+// Draw pixel on PF2 only (planes 1,3,5)
+// colorIdx: bit 0 -> plane 1, bit 1 -> plane 3, bit 2 -> plane 5
 static void DrawPixel(UBYTE* screen_mem, short x, short y, UBYTE colorIdx) {
     if ((UWORD)x >= SCREEN_W || (UWORD)y >= SCREEN_H) return;
     UWORD off = (UWORD)y * ROW_BYTES + ((UWORD)x >> 3);
     UBYTE bit = (UBYTE)(0x80 >> ((UWORD)x & 7));
     if (colorIdx & 1) screen_mem[1 * PLANE_BYTES + off] |= bit;
     if (colorIdx & 2) screen_mem[3 * PLANE_BYTES + off] |= bit;
+    if (colorIdx & 4) screen_mem[5 * PLANE_BYTES + off] |= bit;
 }
 
-// Draw white ship (32x24) - dual-playfield: write to planes 1,3 only
-// Merge original 4 bitplanes: PF2 bit0 (plane1) = bpl0|bpl1, PF2 bit1 (plane3) = bpl2|bpl3
+// Draw white ship (32x24) - dual-playfield: write to planes 1,3 only (greyscale)
+// PF2 bit0 (plane1) = bpl0|bpl1, PF2 bit1 (plane3) = bpl2|bpl3, plane5 stays 0
 static void DrawShipAnim(UBYTE* screen_mem, short x, short y, UBYTE frame) {
     (void)frame;
     if (x <= -32 || x >= SCREEN_W || y <= -24 || y >= SCREEN_H) return;
@@ -430,6 +442,12 @@ static void DrawShipAnim(UBYTE* screen_mem, short x, short y, UBYTE frame) {
         pl3[base+1] = (UWORD)((pl3[base+1] & ~mv1) | (hv1 & mv1));
         if (wx + 2 < ROW_BYTES / 2)
             pl3[base+2] = (UWORD)((pl3[base+2] & ~mv2) | (hv2 & mv2));
+        // Clear plane 5 (PF2 bit2) in ship mask area
+        UWORD* pl5 = (UWORD*)(screen_mem + 5 * PLANE_BYTES);
+        pl5[base]   &= ~mv0;
+        pl5[base+1] &= ~mv1;
+        if (wx + 2 < ROW_BYTES / 2)
+            pl5[base+2] &= ~mv2;
     }
 }
 
@@ -793,9 +811,9 @@ static USHORT* BuildCopperList(USHORT* cop, const UBYTE** planes) {
     cop = copSetReg(cop, offsetof(struct Custom, diwstop),  (xstop-256) + ((ystop-256)<<8));
 
     // 5 bitplanes, lowres, dual-playfield
-    cop = copSetReg(cop, offsetof(struct Custom, bplcon0), (1<<9) | (5<<12) | (1<<10));
+    cop = copSetReg(cop, offsetof(struct Custom, bplcon0), (1<<9) | (6<<12) | (1<<10));
     cop = copSetReg(cop, offsetof(struct Custom, bplcon1), 0);
-    cop = copSetReg(cop, offsetof(struct Custom, bplcon2), (1<<6));  // PF2PRI: game in front
+    cop = copSetReg(cop, offsetof(struct Custom, bplcon2), (1<<6) | (2<<2) | (1<<1));  // PF2PRI | PF1=3 planes | PF2=3 planes
     cop = copSetReg(cop, offsetof(struct Custom, bpl1mod), 0);
     cop = copSetReg(cop, offsetof(struct Custom, bpl2mod), 0);
 
@@ -834,8 +852,8 @@ static void RenderFrame(UBYTE* screen_mem) {
             TEnemy* e = &g_Enemies[i];
             if (!e->active) continue;
             if (e->type == ENEMY_TYPE_BOSS) {
-                DrawBob32(screen_mem, g_BossMask, g_BossWhiteData, e->x, e->y, 0x03);
-                DrawBob32(screen_mem, g_BossMask, g_BossRedData,   e->x, e->y, 0x01);
+                DrawBob32(screen_mem, g_BossMask, g_BossWhiteData, e->x, e->y, 0x07);
+                DrawBob32(screen_mem, g_BossMask, g_BossRedData,   e->x, e->y, 0x06);
             } else if (e->type == ENEMY_TYPE_BASIC) {
                 DrawBob32_2bpl(screen_mem, g_EnemyBasic24Mask,
                                g_EnemyBasic24Hi, g_EnemyBasic24Lo,
@@ -851,7 +869,7 @@ static void RenderFrame(UBYTE* screen_mem) {
         }
         for (int i = 0; i < MAX_SHOTS; i++) {
             if (!g_Shots[i].active) continue;
-            DrawBob16(screen_mem, g_ShotMask, g_ShotData, g_Shots[i].x, g_Shots[i].y, 0x03, 8);
+            DrawBob16(screen_mem, g_ShotMask, g_ShotData, g_Shots[i].x, g_Shots[i].y, 0x04, 8);
         }
         for (int i = 0; i < MAX_ENEMY_SHOTS; i++) {
             if (!g_EnemyShots[i].active) continue;
@@ -862,7 +880,7 @@ static void RenderFrame(UBYTE* screen_mem) {
             TExplosion* ex = &g_Explosions[i];
             if (!ex->active) continue;
             UWORD fr = (UWORD)((ex->frame >> 1) & 3);
-            DrawBob16(screen_mem, g_ExpMasks[fr], g_ExpData[fr], ex->x, ex->y, 0x03, 8);
+            DrawBob16(screen_mem, g_ExpMasks[fr], g_ExpData[fr], ex->x, ex->y, 0x05, 8);
         }
     }
 }
@@ -906,8 +924,8 @@ int main() {
     WaitVbl();
 
     // Build initial copper list pointing to show_buf
-    // Dual-playfield interleave: BPL1=PF1_0, BPL2=PF2_0, BPL3=PF1_1, BPL4=PF2_1, BPL5=PF1_2
-    // Memory layout: plane0..4 sequential; PF1=planes 0,2,4; PF2=planes 1,3
+    // Dual-playfield interleave: BPL1=PF1_0, BPL2=PF2_0, BPL3=PF1_1, BPL4=PF2_1, BPL5=PF1_2, BPL6=PF2_2
+    // Memory layout: plane0..5 sequential; PF1=planes 0,2,4; PF2=planes 1,3,5
     {
         const UBYTE* planes[SCREEN_BPL];
         planes[0] = show_buf + 0 * plane_size;  // BPL1 = PF1 bit0
@@ -915,6 +933,7 @@ int main() {
         planes[2] = show_buf + 2 * plane_size;  // BPL3 = PF1 bit1
         planes[3] = show_buf + 3 * plane_size;  // BPL4 = PF2 bit1
         planes[4] = show_buf + 4 * plane_size;  // BPL5 = PF1 bit2
+        planes[5] = show_buf + 5 * plane_size;  // BPL6 = PF2 bit2
         BuildCopperList(cop_show, planes);
     }
     custom->cop1lc = (ULONG)cop_show;
@@ -952,6 +971,7 @@ int main() {
             planes[2] = draw_buf + 2 * plane_size;  // BPL3 = PF1 bit1
             planes[3] = draw_buf + 3 * plane_size;  // BPL4 = PF2 bit1
             planes[4] = draw_buf + 4 * plane_size;  // BPL5 = PF1 bit2
+            planes[5] = draw_buf + 5 * plane_size;  // BPL6 = PF2 bit2
             BuildCopperList(cop_build, planes);
         }
         // Schedule copper swap at next VBlank

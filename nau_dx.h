@@ -8,7 +8,7 @@
 // --- Screen layout ----------------------------------------------------------
 #define SCREEN_W        320
 #define SCREEN_H        256
-#define SCREEN_BPL      5       // bitplanes -> 32 colors
+#define SCREEN_BPL      6       // 6 bitplanes -> dual-playfield 3+3 (8+8 colors)
 
 // Layout: [wall_L 16px][game 256px][wall_R 16px][HUD 32px]
 #define WALL_L_X        0
