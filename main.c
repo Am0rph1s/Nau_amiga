@@ -214,7 +214,7 @@ static void ClearGameArea(UBYTE* screen_mem) {
 }
 
 // Pre-render tilemap background into bg_buf (called once at startup)
-#define BG_PLANE_BYTES (ROW_BYTES * BG_MAP_ROWS * BG_TILE_H)
+#define BG_PLANE_BYTES (ROW_BYTES * (BG_MAP_ROWS * BG_TILE_H + SCREEN_H))
 static const int bg_plane_offs[BG_BPL] = { 0, 2, 4 };
 
 static void InitTilemapBG(UBYTE* bg_buf) {
@@ -737,25 +737,6 @@ static void SpawnEnemy(short type) {
     }
 }
 
-static void SpawnBoss(unsigned char flags) {
-    (void)flags;
-    short idx = FindFreeEnemy();
-    if (idx < 0) return;
-    TEnemy* e = &g_Enemies[idx];
-    e->active = 1;
-    e->type = ENEMY_TYPE_BOSS;
-    e->x = (short)(STAR_X0 + STAR_W / 2 - ENEMY_BOSS_W / 2);
-    e->y = GAME_Y0 - ENEMY_BOSS_H;
-    e->vx = 1;
-    e->vy = 1;
-    e->health = BOSS_HP_BASE + ((g_Level / 5) * BOSS_HP_PER_TIER);
-    e->boss_hp_max = e->health;
-    e->boss_vosc = 0;
-    e->fire_cd = 0;
-    e->zig_timer = 0;
-    e->pattern = PATT_STRAIGHT;
-}
-
 static void SpawnExplosion(short x, short y, short kind) {
     for (int i = 0; i < MAX_EXPLOSIONS; i++) {
         if (!g_Explosions[i].active) {
@@ -881,10 +862,7 @@ static void RenderFrame(UBYTE* screen_mem) {
         for (int i = 0; i < MAX_ENEMIES; i++) {
             TEnemy* e = &g_Enemies[i];
             if (!e->active) continue;
-            if (e->type == ENEMY_TYPE_BOSS) {
-                DrawBob32(screen_mem, g_BossMask, g_BossWhiteData, e->x, e->y, 0x07);
-                DrawBob32(screen_mem, g_BossMask, g_BossRedData,   e->x, e->y, 0x06);
-            } else if (e->type == ENEMY_TYPE_BASIC) {
+            if (e->type == ENEMY_TYPE_BASIC) {
                 DrawBob32_2bpl(screen_mem, g_EnemyBasic24Mask,
                                g_EnemyBasic24Hi, g_EnemyBasic24Lo,
                                e->x, e->y, 1, 3);
@@ -950,30 +928,33 @@ int main() {
     UBYTE* bg_buf = (UBYTE*)AllocMem(BG_PLANE_BYTES * BG_BPL, MEMF_CHIP | MEMF_CLEAR);
     if (!bg_buf) { FreeMem(screen_mem, buf_size * 2); CloseLibrary((struct Library*)DOSBase); CloseLibrary((struct Library*)GfxBase); Exit(0); }
     InitTilemapBG(bg_buf);
+    // Copy first 256 rows to end for seamless wrap scrolling
+    for (int bpl = 0; bpl < BG_BPL; bpl++) {
+        UBYTE* src = bg_buf + bg_plane_offs[bpl] * BG_PLANE_BYTES;
+        UBYTE* dst = src + BG_MAP_ROWS * BG_TILE_H * ROW_BYTES;
+        for (int row = 0; row < SCREEN_H; row++) {
+            for (int b = 0; b < ROW_BYTES; b++)
+                dst[row * ROW_BYTES + b] = src[row * ROW_BYTES + b];
+        }
+    }
     // Apply rocky wall texture to wall area (plane 0 = tile pattern, planes 2,4 = 0xFF)
-    // This gives two wall colors (slots 6-7) with per-row variation from g_TileSolid/g_TileDeco
     ParallaxInit();
-    // Pre-bake wall pattern into bg_buf across all 1024 rows
-    // Use scrolling pixel positions to vary the tile pattern along the wall height
     {
         UBYTE* p0 = bg_buf + 0 * BG_PLANE_BYTES;
         UBYTE* p2 = bg_buf + 2 * BG_PLANE_BYTES;
         UBYTE* p4 = bg_buf + 4 * BG_PLANE_BYTES;
-        for (int row = 0; row < BG_MAP_ROWS * BG_TILE_H; row++) {
-            // Wall pattern uses tile based on row (scrolls with background)
+        int total_rows = BG_MAP_ROWS * BG_TILE_H;
+        for (int row = 0; row < total_rows; row++) {
             short t = (short)((row) & (PAR_TILE_H - 1));
             UWORD solid = g_TileSolid[t];
             UWORD deco  = g_TileDeco[t];
-            // Left wall: bytes 0-1 (16px), right wall: bytes 34-35 (16px)
             UBYTE* r0 = p0 + row * ROW_BYTES;
             UBYTE* r2 = p2 + row * ROW_BYTES;
             UBYTE* r4 = p4 + row * ROW_BYTES;
-            // Plane 0: tile pattern (high byte = left, low byte = right)
             r0[0] = (UBYTE)(deco >> 8);
             r0[1] = (UBYTE)(solid & 0xFF);
             r0[34] = (UBYTE)(deco & 0xFF);
             r0[35] = (UBYTE)(solid >> 8);
-            // Planes 2,4: full intensity for wall columns
             r2[0] = r2[1] = r2[34] = r2[35] = 0xFF;
             r4[0] = r4[1] = r4[34] = r4[35] = 0xFF;
         }
@@ -1038,9 +1019,9 @@ int main() {
         // --- Game logic ---
         UBYTE joy = ReadJoy();
 
-        // --- Advance background scroll ---
+        // --- Advance background scroll (wraps for infinite loop) ---
         g_BGScrollY--;
-        if (g_BGScrollY < 0) g_BGScrollY = 0;
+        if (g_BGScrollY < 0) g_BGScrollY = BG_MAP_ROWS * BG_TILE_H - 1;
         for (int i = 0; i < N_STARS_1; i++) {
             if (++g_Stars1[i].y >= GAME_H) {
                 g_Stars1[i].y = 0;
@@ -1114,8 +1095,6 @@ int main() {
                     g_WaveKilled  = 0;
                     g_SpawnTimer  = SPAWN_FIRST_DELAY;
                     g_WaveActive  = 1;
-                    if (cfg->flags & LCFG_F_BOSS1) SpawnBoss(cfg->flags);
-                    if (cfg->flags & LCFG_F_BOSS2) SpawnBoss(cfg->flags);
                 }
             } else {
                 const TLevelConfig* cfg = &g_Levels[g_Level - 1];
@@ -1151,34 +1130,16 @@ int main() {
             for (int i = 0; i < MAX_ENEMIES; i++) {
                 TEnemy* e = &g_Enemies[i];
                 if (!e->active) continue;
-                if (e->type == ENEMY_TYPE_BOSS) {
-                    if (e->y < BOSS_HOLD_Y) {
-                        e->y += e->vy;
-                    } else {
-                        e->boss_vosc++;
-                        e->y = BOSS_HOLD_Y + (e->boss_vosc & 8 ? 4 : -4);
-                        if (e->boss_vosc & 4) {
-                            e->x += 1;
-                            if (e->x >= STAR_X1 - ENEMY_BOSS_W - 4) e->x = (short)(STAR_X1 - ENEMY_BOSS_W - 4);
-                        } else {
-                            e->x -= 1;
-                            if (e->x <= STAR_X0 + 4) e->x = (short)(STAR_X0 + 4);
-                        }
-                    }
-                } else {
-                    e->y += e->vy;
-                    if (e->y > GAME_H) { e->active = 0; g_WaveKilled++; }
-                }
+                e->y += e->vy;
+                if (e->y > GAME_H) { e->active = 0; g_WaveKilled++; }
 
                 // Simple shot-enemy collision
                 for (int s = 0; s < MAX_SHOTS; s++) {
                     if (!g_Shots[s].active) continue;
-                    UWORD ew = (e->type == ENEMY_TYPE_BOSS) ? ENEMY_BOSS_W : ENEMY_W;
-                    UWORD eh = (e->type == ENEMY_TYPE_BOSS) ? ENEMY_BOSS_H : ENEMY_H;
                     if (g_Shots[s].x + SHOT_W  > e->x &&
-                        g_Shots[s].x            < e->x + ew &&
+                        g_Shots[s].x            < e->x + ENEMY_W &&
                         g_Shots[s].y + SHOT_H  > e->y &&
-                        g_Shots[s].y            < e->y + eh) {
+                        g_Shots[s].y            < e->y + ENEMY_H) {
                         g_Shots[s].active = 0;
                         e->health--;
                         if (e->health <= 0) {
@@ -1190,9 +1151,8 @@ int main() {
                                 case ENEMY_TYPE_HEAVY:  g_Score += ENEMY_SCORE_HEAVY;  break;
                                 case ENEMY_TYPE_DIVER:  g_Score += ENEMY_SCORE_DIVER;  break;
                                 case ENEMY_TYPE_BOMBER: g_Score += ENEMY_SCORE_BOMBER; break;
-                                case ENEMY_TYPE_BOSS:   g_Score += ENEMY_SCORE_BOSS;   break;
                             }
-                            SpawnExplosion(e->x, e->y, e->type == ENEMY_TYPE_BOSS ? EXP_KIND_BOSS : EXP_KIND_ENEMY);
+                            SpawnExplosion(e->x, e->y, EXP_KIND_ENEMY);
                             // Check extra life
                             if (g_Score >= g_NextLifeAt) {
                                 g_Lives++;
@@ -1204,12 +1164,10 @@ int main() {
 
                 // Enemy-ship collision
                 if (!g_ShipExploding) {
-                    UWORD ew = (e->type == ENEMY_TYPE_BOSS) ? ENEMY_BOSS_W : ENEMY_W;
-                    UWORD eh = (e->type == ENEMY_TYPE_BOSS) ? ENEMY_BOSS_H : ENEMY_H;
-                    if (e->x + ew  > g_ShipX + SHIP_HIT_OX &&
-                        e->x       < g_ShipX + SHIP_HIT_OX + SHIP_HIT_W &&
-                        e->y + eh  > g_ShipY + SHIP_HIT_OY &&
-                        e->y       < g_ShipY + SHIP_HIT_OY + SHIP_HIT_H) {
+                    if (e->x + ENEMY_W  > g_ShipX + SHIP_HIT_OX &&
+                        e->x            < g_ShipX + SHIP_HIT_OX + SHIP_HIT_W &&
+                        e->y + ENEMY_H  > g_ShipY + SHIP_HIT_OY &&
+                        e->y            < g_ShipY + SHIP_HIT_OY + SHIP_HIT_H) {
                         e->active = 0;
                         g_WaveKilled++;
                         SpawnExplosion(e->x, e->y, EXP_KIND_ENEMY);
