@@ -560,6 +560,8 @@ static short g_CurrentBiome = 0;
 static short g_StarsEnabled = 0;  // 0=planet mode (no stars), 1=space mode
 static short g_BGScrollY  = 0;    // tilemap vertical scroll offset
 
+static void ResetGameSession() {
+
 // Ship
 static short g_ShipX, g_ShipY;
 static short g_ShipExploding  = 0;
@@ -682,6 +684,7 @@ static void ResetGameSession() {
     g_Level      = 1;
     g_NextLifeAt = EXTRA_LIFE_EVERY;
     g_CurrentBiome = 0;
+    g_BGScrollY   = BG_MAP_ROWS * BG_TILE_H - SCREEN_H;
     for (int i = 0; i < MAX_ENEMIES;    i++) g_Enemies[i].active    = 0;
     for (int i = 0; i < MAX_ENEMY_SHOTS;i++) g_EnemyShots[i].active = 0;
     for (int i = 0; i < MAX_EXPLOSIONS; i++) g_Explosions[i].active = 0;
@@ -933,6 +936,9 @@ int main() {
     // Load tilemap palette into PF1 slots 0-7
     for (int i = 0; i < BG_PAL_AMIGA_COUNT && i < 8; i++)
         g_Palette[i] = bg_pal_amiga[i];
+    // Override slots 6-7 with wall rock colors (dark / light)
+    g_Palette[6] = 0x0321;  // dark rock
+    g_Palette[7] = 0x0654;  // light rock
 
     // --- Allocate screen memory: double buffer (6 bitplanes × 2) ---
     const ULONG plane_size = (SCREEN_W / 8) * SCREEN_H; // 320/8 * 256 = 10240 bytes
@@ -946,13 +952,32 @@ int main() {
     UBYTE* bg_buf = (UBYTE*)AllocMem(BG_PLANE_BYTES * BG_BPL, MEMF_CHIP | MEMF_CLEAR);
     if (!bg_buf) { FreeMem(screen_mem, buf_size * 2); CloseLibrary((struct Library*)DOSBase); CloseLibrary((struct Library*)GfxBase); Exit(0); }
     InitTilemapBG(bg_buf);
-    // Also init wall effect in bg_buf (same as ParallaxInitWalls)
-    for (int i = 0; i < 3; i++) {
-        int plane = bg_plane_offs[i];
-        UBYTE* p = bg_buf + plane * BG_PLANE_BYTES;
+    // Apply rocky wall texture to wall area (plane 0 = tile pattern, planes 2,4 = 0xFF)
+    // This gives two wall colors (slots 6-7) with per-row variation from g_TileSolid/g_TileDeco
+    ParallaxInit();
+    // Pre-bake wall pattern into bg_buf across all 1024 rows
+    // Use scrolling pixel positions to vary the tile pattern along the wall height
+    {
+        UBYTE* p0 = bg_buf + 0 * BG_PLANE_BYTES;
+        UBYTE* p2 = bg_buf + 2 * BG_PLANE_BYTES;
+        UBYTE* p4 = bg_buf + 4 * BG_PLANE_BYTES;
         for (int row = 0; row < BG_MAP_ROWS * BG_TILE_H; row++) {
-            UBYTE* r = p + row * ROW_BYTES;
-            r[0] = r[1] = r[34] = r[35] = 0xFF;
+            // Wall pattern uses tile based on row (scrolls with background)
+            short t = (short)((row) & (PAR_TILE_H - 1));
+            UWORD solid = g_TileSolid[t];
+            UWORD deco  = g_TileDeco[t];
+            // Left wall: bytes 0-1 (16px), right wall: bytes 34-35 (16px)
+            UBYTE* r0 = p0 + row * ROW_BYTES;
+            UBYTE* r2 = p2 + row * ROW_BYTES;
+            UBYTE* r4 = p4 + row * ROW_BYTES;
+            // Plane 0: tile pattern (high byte = left, low byte = right)
+            r0[0] = (UBYTE)(deco >> 8);
+            r0[1] = (UBYTE)(solid & 0xFF);
+            r0[34] = (UBYTE)(deco & 0xFF);
+            r0[35] = (UBYTE)(solid >> 8);
+            // Planes 2,4: full intensity for wall columns
+            r2[0] = r2[1] = r2[34] = r2[35] = 0xFF;
+            r4[0] = r4[1] = r4[34] = r4[35] = 0xFF;
         }
     }
 
@@ -1017,8 +1042,7 @@ int main() {
 
         // --- Advance background scroll ---
         g_BGScrollY--;
-        if (g_BGScrollY < 0)
-            g_BGScrollY += BG_MAP_ROWS * BG_TILE_H;
+        if (g_BGScrollY < 0) g_BGScrollY = 0;
         for (int i = 0; i < N_STARS_1; i++) {
             if (++g_Stars1[i].y >= GAME_H) {
                 g_Stars1[i].y = 0;
