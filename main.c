@@ -560,8 +560,6 @@ static short g_CurrentBiome = 0;
 static short g_StarsEnabled = 0;  // 0=planet mode (no stars), 1=space mode
 static short g_BGScrollY  = 0;    // tilemap vertical scroll offset
 
-static void ResetGameSession() {
-
 // Ship
 static short g_ShipX, g_ShipY;
 static short g_ShipExploding  = 0;
