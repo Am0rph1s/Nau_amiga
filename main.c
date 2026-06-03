@@ -818,8 +818,7 @@ static USHORT* BuildCopperList(USHORT* cop, const UBYTE** planes) {
 // ============================================================================
 
 static void RenderFrame(UBYTE* screen_mem) {
-    ClearGameArea(screen_mem);
-    ParallaxDraw(screen_mem);
+    ClearAndParallaxAsm(screen_mem, g_TileSolid, g_TileDeco, g_ParScroll);
     if (g_StarsEnabled) {
         for (int i = 0; i < N_STARS_1; i++) DrawPixel(screen_mem, g_Stars1[i].x, g_Stars1[i].y, 1);
         for (int i = 0; i < N_STARS_2; i++) DrawPixel(screen_mem, g_Stars2[i].x, g_Stars2[i].y, 2);
