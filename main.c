@@ -823,16 +823,27 @@ static void BuildCopperListEx(USHORT* cop, const UBYTE** pf1_planes, const UBYTE
 
     // PF1: BPL1, BPL3, BPL5 — from bg_buf with vertical scroll
     // PF2: BPL2, BPL4, BPL6 — from draw_buf (no scroll)
+    // Use explicit register offsets (offsetof with var index is unreliable on m68k)
+    static const USHORT pf1_regs[3] = {
+        offsetof(struct Custom, bplpt[0]),  // BPL1
+        offsetof(struct Custom, bplpt[2]),  // BPL3
+        offsetof(struct Custom, bplpt[4]),  // BPL5
+    };
+    static const USHORT pf2_regs[3] = {
+        offsetof(struct Custom, bplpt[1]),  // BPL2
+        offsetof(struct Custom, bplpt[3]),  // BPL4
+        offsetof(struct Custom, bplpt[5]),  // BPL6
+    };
     for (int i = 0; i < 3; i++) {
         ULONG addr_pf1 = (ULONG)pf1_planes[i] + scroll_y * ROW_BYTES;
         ULONG addr_pf2 = (ULONG)pf2_planes[i];
-        *cop++ = offsetof(struct Custom, bplpt[i*2]);       // BPL1, BPL3, BPL5
+        *cop++ = pf1_regs[i];
         *cop++ = (UWORD)(addr_pf1 >> 16);
-        *cop++ = offsetof(struct Custom, bplpt[i*2]) + 2;
+        *cop++ = pf1_regs[i] + 2;
         *cop++ = (UWORD)addr_pf1;
-        *cop++ = offsetof(struct Custom, bplpt[i*2+1]);     // BPL2, BPL4, BPL6
+        *cop++ = pf2_regs[i];
         *cop++ = (UWORD)(addr_pf2 >> 16);
-        *cop++ = offsetof(struct Custom, bplpt[i*2+1]) + 2;
+        *cop++ = pf2_regs[i] + 2;
         *cop++ = (UWORD)addr_pf2;
     }
 
