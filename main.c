@@ -213,32 +213,24 @@ static void ClearGameArea(UBYTE* screen_mem) {
     ClearGameAreaAsm(screen_mem);
 }
 
-// Draw tilemap background to PF1 planes (game area only)
-// PF1 bitplane -> screen plane: {0,2,4,5}
+// Pre-render tilemap background into bg_buf (called once at startup)
+#define BG_PLANE_BYTES (ROW_BYTES * BG_MAP_ROWS * BG_TILE_H)
 static const int bg_plane_offs[BG_BPL] = { 0, 2, 4 };
 
-static void DrawTilemapBG(UBYTE* screen_mem, short scroll_y) {
-    scroll_y = scroll_y % (BG_MAP_ROWS * BG_TILE_H);
-    int start_tile_row = scroll_y / BG_TILE_H;
-    int row_off = scroll_y % BG_TILE_H;
-
-    for (int vy = -row_off; vy < SCREEN_H; vy += BG_TILE_H) {
-        int map_row = (start_tile_row + (vy + row_off) / BG_TILE_H) % BG_MAP_ROWS;
+static void InitTilemapBG(UBYTE* bg_buf) {
+    for (int map_row = 0; map_row < BG_MAP_ROWS; map_row++) {
         for (int tx = 0; tx < BG_MAP_COLS; tx++) {
             UBYTE tile_idx = bg_tilemap[map_row * BG_MAP_COLS + tx];
             const UBYTE* tile = bg_tiles[tile_idx];
             int scr_x = GAME_X0 + tx * BG_TILE_W;
 
             for (int tile_row = 0; tile_row < BG_TILE_H; tile_row++) {
-                int dst_y = vy + tile_row;
-                if (dst_y < 0) continue;
-                if (dst_y >= SCREEN_H) break;
-
-                UBYTE* dst_row = screen_mem + dst_y * ROW_BYTES;
+                int dst_y = map_row * BG_TILE_H + tile_row;
+                UBYTE* dst_row = bg_buf + dst_y * ROW_BYTES;
                 int byte_off = scr_x / 8;
 
                 for (int bpl = 0; bpl < BG_BPL; bpl++) {
-                    UBYTE* dst_plane = dst_row + bg_plane_offs[bpl] * PLANE_BYTES;
+                    UBYTE* dst_plane = dst_row + bg_plane_offs[bpl] * BG_PLANE_BYTES;
                     int tile_off = bpl * (BG_TILE_H * BG_TILE_W / 8) + tile_row * (BG_TILE_W / 8);
                     dst_plane[byte_off]     = tile[tile_off];
                     dst_plane[byte_off + 1] = tile[tile_off + 1];
@@ -826,7 +818,7 @@ static __attribute__((interrupt)) void VBlankHandler() {
 // ============================================================================
 
 
-static USHORT* BuildCopperList(USHORT* cop, const UBYTE** planes) {
+static void BuildCopperListEx(USHORT* cop, const UBYTE** pf1_planes, const UBYTE** pf2_planes, short scroll_y) {
     const USHORT x     = 129;
     const USHORT width = 320;
     const USHORT height= 256;
@@ -836,31 +828,37 @@ static USHORT* BuildCopperList(USHORT* cop, const UBYTE** planes) {
     USHORT ystop = y + height;
     USHORT fw    = (x >> 1) - RES;
 
-    // Display window & fetch
     cop = copSetReg(cop, offsetof(struct Custom, ddfstrt),  fw);
     cop = copSetReg(cop, offsetof(struct Custom, ddfstop),  fw + (((width>>4)-1)<<3));
     cop = copSetReg(cop, offsetof(struct Custom, diwstrt),  x + (y<<8));
     cop = copSetReg(cop, offsetof(struct Custom, diwstop),  (xstop-256) + ((ystop-256)<<8));
 
-    // 5 bitplanes, lowres, dual-playfield
     cop = copSetReg(cop, offsetof(struct Custom, bplcon0), (1<<9) | (6<<12) | (1<<10));
     cop = copSetReg(cop, offsetof(struct Custom, bplcon1), 0);
-    cop = copSetReg(cop, offsetof(struct Custom, bplcon2), (1<<6) | (2<<2) | (1<<1));  // PF2PRI | PF1=3 planes | PF2=3 planes
+    cop = copSetReg(cop, offsetof(struct Custom, bplcon2), (1<<6) | (2<<2) | (1<<1));
     cop = copSetReg(cop, offsetof(struct Custom, bpl1mod), 0);
     cop = copSetReg(cop, offsetof(struct Custom, bpl2mod), 0);
 
-    // Bitplane pointers - dual-playfield interleaved order:
-    // BPL1=PF1_plane0, BPL2=PF2_plane0, BPL3=PF1_plane1, BPL4=PF2_plane1, BPL5=PF1_plane2
-    cop = copSetPlanes(0, cop, planes, SCREEN_BPL);
+    // PF1: BPL1, BPL3, BPL5 — from bg_buf with vertical scroll
+    // PF2: BPL2, BPL4, BPL6 — from draw_buf (no scroll)
+    for (int i = 0; i < 3; i++) {
+        ULONG addr_pf1 = (ULONG)pf1_planes[i] + scroll_y * ROW_BYTES;
+        ULONG addr_pf2 = (ULONG)pf2_planes[i];
+        *cop++ = offsetof(struct Custom, bplpt[i*2]);       // BPL1, BPL3, BPL5
+        *cop++ = (UWORD)(addr_pf1 >> 16);
+        *cop++ = offsetof(struct Custom, bplpt[i*2]) + 2;
+        *cop++ = (UWORD)addr_pf1;
+        *cop++ = offsetof(struct Custom, bplpt[i*2+1]);     // BPL2, BPL4, BPL6
+        *cop++ = (UWORD)(addr_pf2 >> 16);
+        *cop++ = offsetof(struct Custom, bplpt[i*2+1]) + 2;
+        *cop++ = (UWORD)addr_pf2;
+    }
 
-    // Load palette: all 32 slots from g_Palette
     for (int i = 0; i < 32; i++)
         cop = copSetColor(cop, i, g_Palette[i]);
 
-    // End copper list
     *cop++ = 0xffff;
     *cop++ = 0xfffe;
-    return cop;
 }
 
 // ============================================================================
@@ -869,8 +867,6 @@ static USHORT* BuildCopperList(USHORT* cop, const UBYTE** planes) {
 
 static void RenderFrame(UBYTE* screen_mem) {
     ClearGameArea(screen_mem);
-    DrawTilemapBG(screen_mem, g_BGScrollY);
-    ParallaxDraw(screen_mem);
     if (g_StarsEnabled) {
         for (int i = 0; i < N_STARS_1; i++) DrawPixel(screen_mem, g_Stars1[i].x, g_Stars1[i].y, 1);
         for (int i = 0; i < N_STARS_2; i++) DrawPixel(screen_mem, g_Stars2[i].x, g_Stars2[i].y, 2);
@@ -938,17 +934,27 @@ int main() {
     for (int i = 0; i < BG_PAL_AMIGA_COUNT && i < 8; i++)
         g_Palette[i] = bg_pal_amiga[i];
 
-    // --- Allocate screen memory: double buffer (5 bitplanes × 2) ---
+    // --- Allocate screen memory: double buffer (6 bitplanes × 2) ---
     const ULONG plane_size = (SCREEN_W / 8) * SCREEN_H; // 320/8 * 256 = 10240 bytes
-    const ULONG buf_size   = plane_size * SCREEN_BPL;    // 51200 bytes per buffer
+    const ULONG buf_size   = plane_size * SCREEN_BPL;    // 61440 bytes per buffer
     UBYTE* screen_mem = (UBYTE*)AllocMem(buf_size * 2, MEMF_CHIP | MEMF_CLEAR);
     if (!screen_mem) { CloseLibrary((struct Library*)DOSBase); CloseLibrary((struct Library*)GfxBase); Exit(0); }
     UBYTE* draw_buf = screen_mem;
     UBYTE* show_buf = screen_mem + buf_size;
 
-    // Initialize static wall planes (2-4 = 0xFF, plane 1 = 0) in both buffers
-    ParallaxInitWalls(draw_buf);
-    ParallaxInitWalls(show_buf);
+    // --- Allocate pre-rendered background buffer (PF1 only, 3 planes × 1024 rows) ---
+    UBYTE* bg_buf = (UBYTE*)AllocMem(BG_PLANE_BYTES * BG_BPL, MEMF_CHIP | MEMF_CLEAR);
+    if (!bg_buf) { FreeMem(screen_mem, buf_size * 2); CloseLibrary((struct Library*)DOSBase); CloseLibrary((struct Library*)GfxBase); Exit(0); }
+    InitTilemapBG(bg_buf);
+    // Also init wall effect in bg_buf (same as ParallaxInitWalls)
+    for (int i = 0; i < 3; i++) {
+        int plane = bg_plane_offs[i];
+        UBYTE* p = bg_buf + plane * BG_PLANE_BYTES;
+        for (int row = 0; row < BG_MAP_ROWS * BG_TILE_H; row++) {
+            UBYTE* r = p + row * ROW_BYTES;
+            r[0] = r[1] = r[34] = r[35] = 0xFF;
+        }
+    }
 
     // --- Allocate double-buffered copper lists ---
     USHORT* copper1 = (USHORT*)AllocMem(1024, MEMF_CHIP | MEMF_CLEAR);
@@ -960,19 +966,11 @@ int main() {
     TakeSystem();
     WaitVbl();
 
-    // Build initial copper list pointing to show_buf
-    // Dual-playfield: PF1=3 planes (slots 0-7), PF2=3 planes (slots 8-15)
-    // BPL1=PF1_0, BPL2=PF2_0, BPL3=PF1_1, BPL4=PF2_1, BPL5=PF1_2, BPL6=PF2_2
-    // Memory: plane0..5; PF1=0,2,4; PF2=1,3,5
+    // Build initial copper list: PF1 from bg_buf (scroll=0), PF2 from show_buf
     {
-        const UBYTE* planes[SCREEN_BPL];
-        planes[0] = show_buf + 0 * plane_size;  // BPL1 = PF1 bit0
-        planes[1] = show_buf + 1 * plane_size;  // BPL2 = PF2 bit0
-        planes[2] = show_buf + 2 * plane_size;  // BPL3 = PF1 bit1
-        planes[3] = show_buf + 3 * plane_size;  // BPL4 = PF2 bit1
-        planes[4] = show_buf + 4 * plane_size;  // BPL5 = PF1 bit2
-        planes[5] = show_buf + 5 * plane_size;  // BPL6 = PF2 bit2
-        BuildCopperList(cop_show, planes);
+        const UBYTE* pf1[3] = { bg_buf + 0*BG_PLANE_BYTES, bg_buf + 1*BG_PLANE_BYTES, bg_buf + 2*BG_PLANE_BYTES };
+        const UBYTE* pf2[3] = { show_buf + 1*plane_size, show_buf + 3*plane_size, show_buf + 5*plane_size };
+        BuildCopperListEx(cop_show, pf1, pf2, 0);
     }
     custom->cop1lc = (ULONG)cop_show;
     custom->dmacon = DMAF_BLITTER;
@@ -1000,17 +998,11 @@ int main() {
         // Render next frame (copper is showing show_buf, NOT draw_buf)
         RenderFrame(draw_buf);
 
-        // Build copper pointing to draw_buf (the frame we just rendered)
-        // Dual-playfield: PF1=3 planes (slots 0-7), PF2=3 planes (slots 8-15)
+        // Build copper: PF1 from bg_buf (with scroll), PF2 from draw_buf
         {
-            const UBYTE* planes[SCREEN_BPL];
-            planes[0] = draw_buf + 0 * plane_size;  // BPL1 = PF1 bit0
-            planes[1] = draw_buf + 1 * plane_size;  // BPL2 = PF2 bit0
-            planes[2] = draw_buf + 2 * plane_size;  // BPL3 = PF1 bit1
-            planes[3] = draw_buf + 3 * plane_size;  // BPL4 = PF2 bit1
-            planes[4] = draw_buf + 4 * plane_size;  // BPL5 = PF1 bit2
-            planes[5] = draw_buf + 5 * plane_size;  // BPL6 = PF2 bit2
-            BuildCopperList(cop_build, planes);
+            const UBYTE* pf1[3] = { bg_buf + 0*BG_PLANE_BYTES, bg_buf + 1*BG_PLANE_BYTES, bg_buf + 2*BG_PLANE_BYTES };
+            const UBYTE* pf2[3] = { draw_buf + 1*plane_size, draw_buf + 3*plane_size, draw_buf + 5*plane_size };
+            BuildCopperListEx(cop_build, pf1, pf2, g_BGScrollY);
         }
         // Schedule copper swap at next VBlank
         { USHORT* tmp = cop_build; cop_build = cop_show; cop_show = tmp; }
@@ -1023,8 +1015,7 @@ int main() {
         // --- Game logic ---
         UBYTE joy = ReadJoy();
 
-        // --- Advance star positions (for next frame) ---
-        ParallaxUpdate();
+        // --- Advance background scroll ---
         g_BGScrollY--;
         if (g_BGScrollY < 0)
             g_BGScrollY += BG_MAP_ROWS * BG_TILE_H;
@@ -1236,6 +1227,7 @@ int main() {
     FreeSystem();
 
     FreeMem(screen_mem, buf_size * 2);
+    FreeMem(bg_buf, BG_PLANE_BYTES * BG_BPL);
     FreeMem(copper1, 1024);
     FreeMem(copper2, 1024);
 
