@@ -1004,9 +1004,9 @@ int main() {
 
         // --- Advance star positions (for next frame) ---
         ParallaxUpdate();
-        g_BGScrollY++;
-        if (g_BGScrollY >= BG_MAP_ROWS * BG_TILE_H)
-            g_BGScrollY -= BG_MAP_ROWS * BG_TILE_H;
+        g_BGScrollY--;
+        if (g_BGScrollY < 0)
+            g_BGScrollY += BG_MAP_ROWS * BG_TILE_H;
         for (int i = 0; i < N_STARS_1; i++) {
             if (++g_Stars1[i].y >= GAME_H) {
                 g_Stars1[i].y = 0;
