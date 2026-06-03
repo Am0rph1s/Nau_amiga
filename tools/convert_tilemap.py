@@ -3,7 +3,7 @@ from PIL import Image
 import sys, os
 
 TILE_W, TILE_H = 16, 16
-NUM_BPL = 4  # PF1 has 4 bitplanes
+NUM_BPL = 3  # PF1 has 3 bitplanes (3+3 dual-playfield)
 
 def to_amiga_color(rgb):
     """Convert 8-bit RGB tuple to Amiga 12-bit 0x0RGB."""
@@ -30,7 +30,7 @@ def pixels_to_planar(pixels, w, h, nplanes):
 
 def main():
     if len(sys.argv) < 2:
-        png_path = os.path.join(os.path.dirname(__file__), '..', 'escenari', 'cano_tileset.png')
+        png_path = os.path.join(os.path.dirname(__file__), '..', 'escenari', 'cano_tileset_b.png')
     else:
         png_path = sys.argv[1]
 
@@ -138,9 +138,9 @@ def main():
             f.write('\n')
         f.write('};\n\n')
 
-        # PF1 plane offsets within screen_mem (dual-playfield: PF1 = BPL1,3,5,6)
-        f.write('// PF1 bitplane -> screen_mem plane offset\n')
-        f.write(f'static const int bg_pf1_plane_screen[{NUM_BPL}] = {{ 0, 2, 4, 5 }};\n')
+        # PF1 plane offsets within screen_mem (dual-playfield: PF1 = BPL1,3,5)
+        f.write('// PF1 bitplane -> screen_mem plane offset (PF1=3 PF2=3)\n')
+        f.write(f'static const int bg_pf1_plane_screen[{NUM_BPL}] = {{ 0, 2, 4 }};\n')
 
     print(f"Written: {out_path}")
 

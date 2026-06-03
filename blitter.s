@@ -163,7 +163,7 @@ BlitterClearArea:
 
         .global ClearGameAreaAsm
 ClearGameAreaAsm:
-| Clear planes 1 and 3 only (PF2 in dual-playfield mode 4+2)
+| Clear planes 1,3,5 only (PF2 in dual-playfield mode 3+3)
 | Full 40 bytes per row (no wall preservation needed, walls are in PF1)
         movem.l d0-d1/a0-a1,-(sp)
         move.l  20(sp),a0
@@ -199,6 +199,22 @@ ClearGameAreaAsm:
         clr.l   36(a1)
         lea     40(a1),a1
         dbra    d0,.cga_p3_row
+        | Plane 5 = advance from plane4 end + 10240 -> plane5 (PF2 bit2)
+        lea     10240(a1),a1
+        move.w  #255,d0
+.cga_p5_row:
+        clr.l   (a1)
+        clr.l   4(a1)
+        clr.l   8(a1)
+        clr.l   12(a1)
+        clr.l   16(a1)
+        clr.l   20(a1)
+        clr.l   24(a1)
+        clr.l   28(a1)
+        clr.l   32(a1)
+        clr.l   36(a1)
+        lea     40(a1),a1
+        dbra    d0,.cga_p5_row
         movem.l (sp)+,d0-d1/a0-a1
         rts
 

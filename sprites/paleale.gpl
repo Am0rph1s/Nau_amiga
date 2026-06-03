@@ -1,0 +1,12 @@
+GIMP Palette
+#Palette Name: PaleAle
+#Description: PaleAle is an 8-bit blue palette created for my app, inspired by Ale.<p>The goal was to capture a joyful and nostalgic feeling through soft sky blues, vibrant aqua tones, and deep arcade-inspired shades.</p><p>Designed for retro-inspired interfaces, pixel art visuals, cozy atmospheres, and dreamy game aesthetics.</p>
+#Colors: 8
+234	249	255	eaf9ff
+190	235	255	beebff
+121	215	255	79d7ff
+79	184	255	4fb8ff
+45	140	255	2d8cff
+31	95	214	1f5fd6
+22	58	138	163a8a
+11	24	61	0b183d
