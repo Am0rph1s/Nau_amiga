@@ -215,7 +215,7 @@ static void ClearGameArea(UBYTE* screen_mem) {
 
 // Pre-render tilemap background into bg_buf (called once at startup)
 #define BG_PLANE_BYTES (ROW_BYTES * (BG_MAP_ROWS * BG_TILE_H + SCREEN_H))
-static const int bg_plane_offs[BG_BPL] = { 0, 2, 4 };
+static const int bg_plane_offs[BG_BPL] = { 0, 1, 2 };  // sequential planes in bg_buf
 
 static void InitTilemapBG(UBYTE* bg_buf) {
     for (int map_row = 0; map_row < BG_MAP_ROWS; map_row++) {
@@ -945,8 +945,8 @@ int main() {
     ParallaxInit();
     {
         UBYTE* p0 = bg_buf + 0 * BG_PLANE_BYTES;
-        UBYTE* p2 = bg_buf + 2 * BG_PLANE_BYTES;
-        UBYTE* p4 = bg_buf + 4 * BG_PLANE_BYTES;
+        UBYTE* p2 = bg_buf + 1 * BG_PLANE_BYTES;
+        UBYTE* p4 = bg_buf + 2 * BG_PLANE_BYTES;
         int total_rows = BG_MAP_ROWS * BG_TILE_H;
         for (int row = 0; row < total_rows; row++) {
             short t = (short)((row) & (PAR_TILE_H - 1));
