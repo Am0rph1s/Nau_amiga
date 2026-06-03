@@ -81,8 +81,8 @@
 #define ENEMY_SCORE_BOMBER  80
 #define ENEMY_SCORE_BOSS    1500
 
-#define ENEMY_W             16
-#define ENEMY_H             16
+#define ENEMY_W             24
+#define ENEMY_H             24
 #define ENEMY_BOSS_W        32
 #define ENEMY_BOSS_H        24
 #define MAX_ENEMIES         6

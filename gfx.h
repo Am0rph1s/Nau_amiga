@@ -184,4 +184,5 @@ static const UWORD* const g_EnemyDatas[5] = {
 static const UWORD g_EnemyRows[5] = { 12, 12, 12, 12, 12 };
 
 // Color index per enemy type (into g_Palette)
-static const UBYTE g_EnemyColor[5] = { 16, 17, 20, 22, 24 };
+// PF2 colorMask: bit0->plane1, bit1->plane3. 1=dark,2=mid,3=bright
+static const UBYTE g_EnemyColor[5] = { 3, 3, 3, 2, 1 };
