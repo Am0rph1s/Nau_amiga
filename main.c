@@ -486,7 +486,7 @@ static void RenderFrame(UBYTE* screen_mem); // defined after globals
 // ============================================================================
 
 __attribute__((always_inline)) inline USHORT* copSetColor(USHORT* p, USHORT idx, USHORT col) {
-    *p++ = offsetof(struct Custom, color) + sizeof(UWORD) * idx;
+    *p++ = 0x180 + sizeof(UWORD) * idx;  // absolute copper COLORxx register
     *p++ = col;
     return p;
 }
@@ -823,17 +823,10 @@ static void BuildCopperListEx(USHORT* cop, const UBYTE** pf1_planes, const UBYTE
 
     // PF1: BPL1, BPL3, BPL5 — from bg_buf with vertical scroll
     // PF2: BPL2, BPL4, BPL6 — from draw_buf (no scroll)
-    // Use explicit register offsets (offsetof with var index is unreliable on m68k)
-    static const USHORT pf1_regs[3] = {
-        offsetof(struct Custom, bplpt[0]),  // BPL1
-        offsetof(struct Custom, bplpt[2]),  // BPL3
-        offsetof(struct Custom, bplpt[4]),  // BPL5
-    };
-    static const USHORT pf2_regs[3] = {
-        offsetof(struct Custom, bplpt[1]),  // BPL2
-        offsetof(struct Custom, bplpt[3]),  // BPL4
-        offsetof(struct Custom, bplpt[5]),  // BPL6
-    };
+    // Absolute copper register addresses (0x0E0 = BPL1PTH, 0x0E8 = BPL3PTH, 0x0F0 = BPL5PTH)
+    //                           (0x0E4 = BPL2PTH, 0x0EC = BPL4PTH, 0x0F4 = BPL6PTH)
+    static const USHORT pf1_regs[3] = { 0x0E0, 0x0E8, 0x0F0 };
+    static const USHORT pf2_regs[3] = { 0x0E4, 0x0EC, 0x0F4 };
     for (int i = 0; i < 3; i++) {
         ULONG addr_pf1 = (ULONG)pf1_planes[i] + scroll_y * ROW_BYTES;
         ULONG addr_pf2 = (ULONG)pf2_planes[i];
