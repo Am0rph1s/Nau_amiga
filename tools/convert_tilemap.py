@@ -36,8 +36,14 @@ def main():
 
     img = Image.open(png_path)
     if img.mode != 'P':
-        img = img.convert('P', palette=Image.Palette.ADAPTIVE, colors=8)
-        print(f"Converted to indexed palette ({len(img.getcolors())} colors)")
+        print("ERROR: image must be indexed (palette-based).")
+        print("In Aseprite: File > Export > select 'Indexed' and '8 colors' or less.")
+        print("Then run this script again.")
+        sys.exit(1)
+    pal_colors_used = len(set(img.getdata()))
+    if pal_colors_used > 8:
+        print(f"ERROR: image uses {pal_colors_used} colors. PF1 only supports 8.")
+        sys.exit(1)
 
     w, h = img.size
     print(f"Image: {w}x{h}, mode={img.mode}, colors={len(set(img.getdata()))}")
