@@ -18,6 +18,7 @@
 #include "gfx_enemy_basic24.h"
 #include "gfx_enemy_fast16.h"
 #include "gfx_bg_tiles.h"
+#include "gfx_border.h"
 
 // ============================================================================
 // SYSTEM
@@ -211,6 +212,72 @@ static void ParallaxUpdate(void) {
 
 static void ClearGameArea(UBYTE* screen_mem) {
     ClearGameAreaAsm(screen_mem);
+}
+
+// Draw foreground border (64px) on PF2 — left + mirrored right, independent scroll
+static void DrawBorder(UBYTE* screen_mem, short scroll_y) {
+    int border_h = BORDER_H;
+    scroll_y = scroll_y % border_h;
+    if (scroll_y < 0) scroll_y += border_h;
+
+    static const UBYTE pf2_planes[3] = { 1, 3, 5 };
+    UBYTE* row_ptr = screen_mem;
+
+    for (int row = 0; row < SCREEN_H; row++) {
+        int src_row = (scroll_y + row) % border_h;
+        const UBYTE* mask_row = border_mask + src_row * (BORDER_W / 8);
+        const UBYTE* mask_mirror_row = border_mask_mirror + src_row * (BORDER_W / 8);
+
+        for (int p = 0; p < 3; p++) {
+            UBYTE* dst = row_ptr + pf2_planes[p] * PLANE_BYTES;
+            // Left border: bytes 0-7 (64px)
+            for (int b = 0; b < BORDER_W / 8; b++)
+                dst[b] |= mask_row[b];
+            // Right border: bytes 32-39 (last 64px of 320px screen, at x=256)
+            for (int b = 0; b < BORDER_W / 8; b++)
+                dst[32 + b] |= mask_mirror_row[b];
+        }
+        row_ptr += ROW_BYTES;
+    }
+}
+
+// Check ship collision with border mask
+static short CheckBorderCollision(short ship_x, short ship_y, short scroll_y) {
+    int border_h = BORDER_H;
+    scroll_y = scroll_y % border_h;
+    if (scroll_y < 0) scroll_y += border_h;
+
+    // Ship hitbox corners
+    int sx0 = ship_x + SHIP_HIT_OX;
+    int sy0 = ship_y + SHIP_HIT_OY;
+    int sx1 = sx0 + SHIP_HIT_W;
+    int sy1 = sy0 + SHIP_HIT_H;
+
+    for (int sy = sy0; sy < sy1; sy++) {
+        if (sy < 0 || sy >= SCREEN_H) continue;
+        int src_row = (scroll_y + sy) % border_h;
+        const UBYTE* mask_row = border_mask + src_row * (BORDER_W / 8);
+        const UBYTE* mask_mirror_row = border_mask_mirror + src_row * (BORDER_W / 8);
+
+        for (int sx = sx0; sx < sx1; sx++) {
+            if (sx < 0 || sx >= SCREEN_W) continue;
+
+            // Check left border (x=0..63)
+            if (sx < BORDER_W) {
+                int byte_off = sx / 8;
+                int bit = 7 - (sx & 7);
+                if (mask_row[byte_off] & (1 << bit)) return 1;
+            }
+            // Check right border (x=256..319)
+            if (sx >= SCREEN_W - BORDER_W) {
+                int rx = sx - (SCREEN_W - BORDER_W);
+                int byte_off = rx / 8;
+                int bit = 7 - (rx & 7);
+                if (mask_mirror_row[byte_off] & (1 << bit)) return 1;
+            }
+        }
+    }
+    return 0;
 }
 
 // Pre-render tilemap background into bg_buf (called once at startup)
@@ -540,8 +607,8 @@ static UWORD g_Palette[32] = {
     0x0CCC,              // 11  PF2 light grey
     0x0FF0,              // 12  PF2 yellow (shots)
     0x0F60,              // 13  PF2 orange (explosions)
-    0x0F00,              // 14  PF2 red (boss)
-    0x0FFF,              // 15  PF2 white (boss)
+    0x0F00,              // 14  PF2 red
+    0x0756,              // 15  PF2 border wall
     // Slots 16-31: unused
     0x0000, 0x0000, 0x0000, 0x0000,
     0x0000, 0x0000, 0x0000, 0x0000,
@@ -559,6 +626,7 @@ static short g_TitleMode  = TS_MENU;
 static short g_CurrentBiome = 0;
 static short g_StarsEnabled = 0;  // 0=planet mode (no stars), 1=space mode
 static short g_BGScrollY  = 0;    // tilemap vertical scroll offset
+static short g_BorderScrollY = 0; // foreground border scroll
 
 // Ship
 static short g_ShipX, g_ShipY;
@@ -682,7 +750,8 @@ static void ResetGameSession() {
     g_Level      = 1;
     g_NextLifeAt = EXTRA_LIFE_EVERY;
     g_CurrentBiome = 0;
-    g_BGScrollY   = BG_MAP_ROWS * BG_TILE_H - SCREEN_H;
+    g_BGScrollY     = BG_MAP_ROWS * BG_TILE_H - SCREEN_H;
+    g_BorderScrollY = BORDER_H - SCREEN_H;
     for (int i = 0; i < MAX_ENEMIES;    i++) g_Enemies[i].active    = 0;
     for (int i = 0; i < MAX_ENEMY_SHOTS;i++) g_EnemyShots[i].active = 0;
     for (int i = 0; i < MAX_EXPLOSIONS; i++) g_Explosions[i].active = 0;
@@ -853,6 +922,7 @@ static void BuildCopperListEx(USHORT* cop, const UBYTE** pf1_planes, const UBYTE
 
 static void RenderFrame(UBYTE* screen_mem) {
     ClearGameArea(screen_mem);
+    DrawBorder(screen_mem, g_BorderScrollY);
     if (g_StarsEnabled) {
         for (int i = 0; i < N_STARS_1; i++) DrawPixel(screen_mem, g_Stars1[i].x, g_Stars1[i].y, 1);
         for (int i = 0; i < N_STARS_2; i++) DrawPixel(screen_mem, g_Stars2[i].x, g_Stars2[i].y, 2);
@@ -1027,6 +1097,8 @@ int main() {
         // --- Advance background scroll (wraps for infinite loop) ---
         g_BGScrollY--;
         if (g_BGScrollY < 0) g_BGScrollY = BG_MAP_ROWS * BG_TILE_H - 1;
+        g_BorderScrollY -= 2;  // border moves faster than background
+        if (g_BorderScrollY < 0) g_BorderScrollY += BORDER_H;
         for (int i = 0; i < N_STARS_1; i++) {
             if (++g_Stars1[i].y >= GAME_H) {
                 g_Stars1[i].y = 0;
@@ -1077,6 +1149,14 @@ int main() {
                     }
                 }
                 if (g_FireCooldown > 0) g_FireCooldown--;
+
+                // Border collision
+                if (CheckBorderCollision(g_ShipX, g_ShipY, g_BorderScrollY)) {
+                    SpawnExplosion(g_ShipX, g_ShipY, EXP_KIND_SHIP);
+                    g_ShipExploding  = 1;
+                    g_ShipExplTimer  = SHIP_EXPL_TIMER;
+                    g_Lives--;
+                }
 
             } else {
                 // Exploding
