@@ -294,8 +294,8 @@ static void InitTilemapBG(UBYTE* bg_buf) {
 static void DrawBob16(UBYTE* screen_mem,
                       const UWORD* mask, const UWORD* data,
                       short x, short y, UBYTE colorMask, UWORD rows) {
-    //if (!DrawBob16Asm(screen_mem, mask, data, x, y, colorMask, rows))
-    //    return;  // fast path succeeded
+    if (!DrawBob16Asm(screen_mem, mask, data, x, y, colorMask, rows))
+        return;
     if (x <= -16 || x >= SCREEN_W || y <= -(short)rows || y >= SCREEN_H) return;
     UWORD shift = (UWORD)(x & 15);
     const UWORD* m = mask;
@@ -377,8 +377,8 @@ static void DrawBob32(UBYTE* screen_mem,
 static void DrawBob32_2bpl(UBYTE* screen_mem,
                            const UWORD* mask, const UWORD* dataHi, const UWORD* dataLo,
                            short x, short y, UBYTE planeHi, UBYTE planeLo) {
-    //if (!DrawBob32d2Asm(screen_mem, mask, dataHi, dataLo, x, y, planeHi, planeLo))
-    //    return;  // fast path succeeded
+    if (!DrawBob32d2Asm(screen_mem, mask, dataHi, dataLo, x, y, planeHi, planeLo))
+        return;
     if (x <= -32 || x >= SCREEN_W || y <= -24 || y >= SCREEN_H) return;
     UWORD shift = (UWORD)(x & 15);
     UWORD rows  = 24;
@@ -429,8 +429,8 @@ static void DrawBob32_2bpl(UBYTE* screen_mem,
 static void DrawBob16_2bpl(UBYTE* screen_mem,
                            const UWORD* mask, const UWORD* dataHi, const UWORD* dataLo,
                            short x, short y, UBYTE planeHi, UBYTE planeLo, UWORD rows) {
-    //if (!DrawBob16d2Asm(screen_mem, mask, dataHi, dataLo, x, y, planeHi, planeLo, rows))
-    //    return;  // fast path succeeded
+    if (!DrawBob16d2Asm(screen_mem, mask, dataHi, dataLo, x, y, planeHi, planeLo, rows))
+        return;
     if (x <= -16 || x >= SCREEN_W || y <= -(short)rows || y >= SCREEN_H) return;
     UWORD shift = (UWORD)(x & 15);
     const UWORD* m = mask;
