@@ -931,13 +931,13 @@ static void RenderFrame(UBYTE* screen_mem) {
             if (!e->active) continue;
             if (e->type == ENEMY_TYPE_BASIC) {
                 DrawBob32_2bpl(screen_mem, g_EnemyBasic24Mask,
-                               e->variant ? g_EnemyBasic24Lo : g_EnemyBasic24Hi,
-                               e->variant ? g_EnemyBasic24Hi : g_EnemyBasic24Lo,
+                               e->variant ? g_EnemyBasic24InvHi : g_EnemyBasic24Hi,
+                               e->variant ? g_EnemyBasic24InvLo : g_EnemyBasic24Lo,
                                e->x, e->y, 1, 3);
             } else if (e->type == ENEMY_TYPE_FAST) {
                 DrawBob16_2bpl(screen_mem, g_EnemyFast16Mask,
-                               e->variant ? g_EnemyFast16Lo : g_EnemyFast16Hi,
-                               e->variant ? g_EnemyFast16Hi : g_EnemyFast16Lo,
+                               e->variant ? g_EnemyFast16InvHi : g_EnemyFast16Hi,
+                               e->variant ? g_EnemyFast16InvLo : g_EnemyFast16Lo,
                                e->x, e->y, 1, 3, 16);
             } else {
                 DrawBob16(screen_mem, g_EnemyMasks[e->type], g_EnemyDatas[e->type],
