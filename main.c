@@ -1014,13 +1014,18 @@ int main() {
     }
     // (walls removed — 320px tilemap covers full screen)
 
-    // --- Hardware sprite data for enemy shots (16x8, single array shared by all 8 sprites) ---
+    // --- Hardware sprite data for enemy shots (16x8, in chip RAM) ---
     #define HWSPR_H 8
-    static UWORD g_HwSprData[(HWSPR_H+1)*2] = {
+    static const UWORD g_HwSprData_src[(HWSPR_H+1)*2] = {
         0x0180,0x0000, 0x03C0,0x0180, 0x07E0,0x03C0, 0x0FF0,0x07E0,
         0x0FF0,0x07E0, 0x07E0,0x03C0, 0x03C0,0x0180, 0x0180,0x0000,
         0x0000,0x0000
     };
+    UWORD* g_HwSprData = (UWORD*)AllocMem(sizeof(g_HwSprData_src), MEMF_CHIP);
+    if (g_HwSprData) {
+        for (int i = 0; i < (HWSPR_H+1)*2; i++)
+            g_HwSprData[i] = g_HwSprData_src[i];
+    }
 
     // --- Allocate double-buffered copper lists ---
     USHORT* copper1 = (USHORT*)AllocMem(1024, MEMF_CHIP | MEMF_CLEAR);
