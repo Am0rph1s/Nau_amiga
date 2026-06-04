@@ -579,18 +579,18 @@ DrawBob16Asm:
         bmi     .db16_fail              | y < 0, needs clipping
 
         | --- Setup ---
-        ; Plane base registers: a0=plane1 (10240), a1=plane3 (30720), a5=plane5 (51200)
+        | Plane bases: a0=plane1 (10240), a1=plane3 (30720), a5=plane5 (51200)
         lea     10240(a2),a0
         lea     30720(a2),a1
         lea     30720(a2),a5
         lea     20480(a5),a5
 
-        ; wx = x >> 4 (word index), byte offset = wx * 2
+        | wx = x >> 4 (word index), byte offset = wx * 2
         move.w  d7,d2
         lsr.w   #4,d2                   | d2 = wx
         add.w   d2,d2                   | d2 = wx * 2 (byte offset)
 
-        ; row_base_word = y * 40 + wx * 2
+        | row_base_word = y * 40 + wx * 2
         move.w  d6,d3
         lsl.w   #5,d3                   | d3 = y * 32
         move.w  d6,d0
@@ -598,22 +598,22 @@ DrawBob16Asm:
         add.w   d0,d3                   | d3 = y * 40
         add.w   d2,d3                   | d3 = y*40 + wx*2 (byte offset)
 
-        ; Check row bounds
+        | Check row bounds
         move.w  d6,d0
         add.w   d4,d0                   | d0 = y + rows
         cmpi.w  #256,d0
         bgt     .db16_fail              | bottom clip needed
 
-        ; Per-row increment = 40 bytes per row
+        | Per-row increment = 40 bytes per row
         moveq   #40,d2
 
         | --- Row loop ---
         subq.w  #1,d4                   | rows - 1 for dbra
 .db16_rloop:
-        ; Load mask word
+        | Load mask word
         move.w  (a3)+,d0                | d0 = mask[row]
 
-        ; Apply to plane 1 (BPL2)
+        | Apply to plane 1 (BPL2)
         btst    #0,d5
         beq.s   .db16_p1c
         or.w    d0,(a0,d3.w)
@@ -624,7 +624,7 @@ DrawBob16Asm:
         and.w   d1,(a0,d3.w)
 .db16_p1d:
 
-        ; Apply to plane 3 (BPL4)
+        | Apply to plane 3 (BPL4)
         btst    #1,d5
         beq.s   .db16_p3c
         or.w    d0,(a1,d3.w)
@@ -635,7 +635,7 @@ DrawBob16Asm:
         and.w   d1,(a1,d3.w)
 .db16_p3d:
 
-        ; Apply to plane 5 (BPL6)
+        | Apply to plane 5 (BPL6)
         btst    #2,d5
         beq.s   .db16_p5c
         or.w    d0,(a5,d3.w)
@@ -646,9 +646,9 @@ DrawBob16Asm:
         and.w   d1,(a5,d3.w)
 .db16_p5d:
 
-        ; Next row
-        adda.l  #2,a4                   | advance data pointer (unused in fast path but kept)
-        add.w   d2,d3                   | row_word_offset += 20
+        | Next row
+        adda.l  #2,a4                   | advance data pointer
+        add.w   d2,d3                   | row offset += 40
         dbra    d4,.db16_rloop
 
         moveq   #0,d0                   | success
