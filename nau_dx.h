@@ -26,8 +26,8 @@
 #define SHIP_H          24
 #define SHIP_SPEED_X    8
 #define SHIP_SPEED_Y    8
-#define SHIP_MIN_X      (GAME_X0 - 8)
-#define SHIP_MAX_X      (GAME_X1 - SHIP_W + 8)
+#define SHIP_MIN_X      16
+#define SHIP_MAX_X      (SCREEN_W - SHIP_W - 16)
 #define SHIP_MIN_Y      8
 #define SHIP_MAX_Y      (GAME_H - SHIP_H - 8)
 #define SHIP_SPAWN_X    (GAME_X0 + GAME_W/2 - SHIP_W/2)
