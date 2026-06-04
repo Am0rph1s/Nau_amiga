@@ -451,3 +451,77 @@ ClearAndParallaxAsm:
 
         movem.l (sp)+,d0-d7/a0-a6
         rts
+
+| ============================================================
+| void DrawBorderAsm(UBYTE* screen_mem, const UBYTE* border_data,
+|                    const UBYTE* border_mirror_data, short scroll_y)
+|
+| Draws 64px border on PF2 planes 1,3,5 (left + mirrored right).
+| Hardcoded: BORDER_H=1024, row_bytes=8, plane_size=8192.
+| Stack: sp+4=screen_mem, sp+8=border_data, sp+12=mirror, sp+16=scroll_y
+| ============================================================
+BORDER_H     = 1024
+BORDER_RB    = 8
+BORDER_PS    = 8192
+
+        .global DrawBorderAsm
+DrawBorderAsm:
+        movem.l d0-d7/a2-a6,-(sp)      | 13 regs = 52 bytes
+
+        move.l  56(sp),a3               | a3 = screen_mem
+        move.l  60(sp),a4               | a4 = border_data
+        move.l  64(sp),a5               | a5 = border_mirror_data
+        move.w  68(sp),d7               | d7 = scroll_y
+
+        | Ensure scroll in range (0..1023)
+        andi.w  #1023,d7
+
+        | Plane base pointers
+        lea     10240(a3),a1            | a1 = plane 1 (BPL2)
+        lea     30720(a3),a2            | a2 = plane 3 (3*10240, BPL4)
+        lea     51200(a3),a6            | a6 = plane 5 (5*10240, BPL6)
+
+        | Row loop (256 iterations)
+        move.w  #255,d6
+.db_row:
+        | d7 = scroll row, compute source offset = d7 * 8
+        move.w  d7,d4
+        lsl.w   #3,d4                   | d4 = d7 * 8
+        andi.l  #0xFFFF,d4
+
+        | Load left border (2 longwords from border_data)
+        move.l  a4,a0
+        adda.l  d4,a0
+        movem.l (a0),d0-d1
+
+        | Store to planes 1,3,5 (left: offset 0)
+        movem.l d0-d1,(a1)
+        movem.l d0-d1,(a2)
+        movem.l d0-d1,(a6)
+
+        | Load right border mirrored (2 longwords)
+        move.l  a5,a0
+        adda.l  d4,a0
+        movem.l (a0),d0-d1
+
+        | Store to planes 1,3,5 (right: offset 32)
+        movem.l d0-d1,32(a1)
+        movem.l d0-d1,32(a2)
+        movem.l d0-d1,32(a6)
+
+        | Next row: pointers +40
+        lea     40(a1),a1
+        lea     40(a2),a2
+        lea     40(a6),a6
+
+        | Wrap scroll
+        addq.w  #1,d7
+        cmpi.w  #BORDER_H,d7
+        bcs.s   .db_nw
+        moveq   #0,d7
+.db_nw:
+        dbra    d6,.db_row
+
+.db_done:
+        movem.l (sp)+,d0-d7/a2-a6
+        rts
