@@ -211,9 +211,7 @@ static void ParallaxUpdate(void) {
 }
 
 static void ClearGameArea(UBYTE* screen_mem) {
-    BlitterClearArea(screen_mem + 1 * PLANE_BYTES, 20, SCREEN_H, 0);
-    BlitterClearArea(screen_mem + 3 * PLANE_BYTES, 20, SCREEN_H, 0);
-    BlitterClearArea(screen_mem + 5 * PLANE_BYTES, 20, SCREEN_H, 0);
+    ClearGameAreaAsm(screen_mem);
 }
 
 // Draw foreground border (64px, 3-bitplane) on PF2 — left + mirrored right, independent scroll
@@ -933,7 +931,6 @@ static void BuildCopperListEx(USHORT* cop, const UBYTE** pf1_planes, const UBYTE
 
 static void RenderFrame(UBYTE* screen_mem) {
     ClearGameArea(screen_mem);
-    WaitBlt();
     DrawBorder(screen_mem, g_BorderScrollY);
     if (g_StarsEnabled) {
         for (int i = 0; i < N_STARS_1; i++) DrawPixel(screen_mem, g_Stars1[i].x, g_Stars1[i].y, 1);

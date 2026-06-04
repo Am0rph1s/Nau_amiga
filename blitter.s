@@ -163,56 +163,44 @@ BlitterClearArea:
 
         .global ClearGameAreaAsm
 ClearGameAreaAsm:
-| Clear planes 1,3,5 only (PF2 in dual-playfield mode 3+3)
-| Full 40 bytes per row (no wall preservation needed, walls are in PF1)
+| Clear planes 1,3,5 (PF2) — skip border bytes 0-7 and 32-39 (DrawBorder overwrites them)
+| Only clears bytes 8-31 (6 longwords per row = 24 bytes)
         movem.l d0-d1/a0-a1,-(sp)
         move.l  20(sp),a0
         | Plane 1 = a0 + 10240 (PF2 bit0)
         lea     10240(a0),a1
         move.w  #255,d0
 .cga_p1_row:
-        clr.l   (a1)
-        clr.l   4(a1)
         clr.l   8(a1)
         clr.l   12(a1)
         clr.l   16(a1)
         clr.l   20(a1)
         clr.l   24(a1)
         clr.l   28(a1)
-        clr.l   32(a1)
-        clr.l   36(a1)
         lea     40(a1),a1
         dbra    d0,.cga_p1_row
         | Plane 3 = advance from plane2 end + 10240 -> plane3 (PF2 bit1)
         lea     10240(a1),a1
         move.w  #255,d0
 .cga_p3_row:
-        clr.l   (a1)
-        clr.l   4(a1)
         clr.l   8(a1)
         clr.l   12(a1)
         clr.l   16(a1)
         clr.l   20(a1)
         clr.l   24(a1)
         clr.l   28(a1)
-        clr.l   32(a1)
-        clr.l   36(a1)
         lea     40(a1),a1
         dbra    d0,.cga_p3_row
         | Plane 5 = advance from plane4 end + 10240 -> plane5 (PF2 bit2)
         lea     10240(a1),a1
         move.w  #255,d0
 .cga_p5_row:
-        clr.l   (a1)
-        clr.l   4(a1)
         clr.l   8(a1)
         clr.l   12(a1)
         clr.l   16(a1)
         clr.l   20(a1)
         clr.l   24(a1)
         clr.l   28(a1)
-        clr.l   32(a1)
-        clr.l   36(a1)
         lea     40(a1),a1
         dbra    d0,.cga_p5_row
         movem.l (sp)+,d0-d1/a0-a1
