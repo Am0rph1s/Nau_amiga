@@ -1059,8 +1059,14 @@ int main() {
         ptr[0] = (USHORT)(addr >> 16);
         ptr[1] = (USHORT)addr;
     }
-    // Hide sprites initially (y > 312 = off-screen)
-    for (int s = 0; s < 4; s++) {
+    // Show sprite 4 at fixed position for debugging
+    {
+        volatile USHORT* spr = (volatile USHORT*)0xDFF160;
+        spr[0] = (USHORT)((100 << 8) | (80 >> 1));   // y=100, x=80
+        spr[1] = (USHORT)((80 & 1) << 0);              // V8=0, H0
+    }
+    // Hide sprites 5-7
+    for (int s = 1; s < 4; s++) {
         volatile USHORT* pos = (volatile USHORT*)(0xDFF160 + s*8);
         pos[0] = (USHORT)(256 << 8);
         pos[1] = 0;
@@ -1220,18 +1226,8 @@ int main() {
                 if (g_Shots[i].y < GAME_Y0) g_Shots[i].active = 0;
             }
 
-            // --- Update hardware sprite positions (DMA 4-7) ---
-            for (int i = 0; i < MAX_SHOTS; i++) {
-                volatile USHORT* spr = (volatile USHORT*)(0xDFF160 + i * 8);
-                if (g_Shots[i].active) {
-                    short sx = g_Shots[i].x, sy = g_Shots[i].y;
-                    spr[0] = (USHORT)((sy & 0xFF) << 8) | ((sx >> 1) & 0xFF);
-                    spr[1] = (USHORT)(((sy >> 7) & 2) | ((sx & 1) << 0));
-                } else {
-                    spr[0] = (USHORT)(256 << 8);
-                    spr[1] = 0;
-                }
-            }
+            // --- DEBUG: test sprite position (fixed) ---
+            // Sprite positions are set at init for now
 
             // --- Update enemies ---
             for (int i = 0; i < MAX_ENEMIES; i++) {
