@@ -785,3 +785,113 @@ DrawBob32d2Asm:
 .db322_exit:
         movem.l (sp)+,d2-d7/a2-a6
         rts
+
+| ============================================================
+| int DrawBob16d2Asm(UBYTE* screen_mem, const UWORD* mask,
+|                    const UWORD* dataHi, const UWORD* dataLo,
+|                    short x, short y, UBYTE planeHi, UBYTE planeLo, UWORD rows)
+|
+| Fast-path for word-aligned 16px bobs with 2 data planes + clear plane5.
+| Returns 0 on success, 1 if needs C fallback.
+| Stack: sp+52=screen, +56=mask, +60=dataHi, +64=dataLo, +68=x, +72=y,
+|        +76=planeHi, +80=planeLo, +84=rows
+| ============================================================
+        .global DrawBob16d2Asm
+DrawBob16d2Asm:
+        movem.l d2-d7/a2-a6,-(sp)      | 11 regs = 44 bytes
+
+        move.l  48(sp),a2               | a2 = screen_mem
+        move.l  52(sp),a3               | a3 = mask
+        move.l  56(sp),a4               | a4 = dataHi
+        move.l  60(sp),a5               | a5 = dataLo
+        move.w  66(sp),d7               | d7 = x
+        move.w  70(sp),d6               | d6 = y
+        move.w  74(sp),d5               | d5 = planeHi
+        move.w  78(sp),d4               | d4 = planeLo
+        move.w  82(sp),d3               | d3 = rows
+
+        | Fast-path checks
+        tst.w   d3
+        beq     .db162_fail
+        btst    #0,d7
+        bne     .db162_fail
+        cmpi.w  #-16,d7
+        ble     .db162_fail
+        cmpi.w  #304,d7
+        bgt     .db162_fail
+        tst.w   d6
+        bmi     .db162_fail
+
+        | Plane pointers
+        move.w  d5,d0
+        mulu    #10240,d0
+        move.l  a2,a0
+        adda.l  d0,a0                   | a0 = planeHi
+        move.w  d4,d0
+        mulu    #10240,d0
+        move.l  a2,a1
+        adda.l  d0,a1                   | a1 = planeLo
+        | plane5
+        lea     30720(a2),a6
+        lea     20480(a6),a6            | a6 = plane5
+
+        | wx = x >> 4, byte offset = wx * 2
+        move.w  d7,d2
+        lsr.w   #4,d2
+        add.w   d2,d2                   | d2 = wx * 2
+
+        | Row offset = y * 40 + wx * 2
+        move.w  d6,d1
+        lsl.w   #5,d1                   | y * 32
+        move.w  d6,d0
+        lsl.w   #3,d0                   | y * 8
+        add.w   d0,d1                   | y * 40
+        add.w   d2,d1                   | + wx*2 -> d1 = row byte offset
+
+        | Bottom check
+        move.w  d6,d0
+        add.w   d3,d0                   | y + rows
+        cmpi.w  #256,d0
+        bgt     .db162_fail
+
+        | dbra counter
+        subq.w  #1,d3
+        | Row increment
+        moveq   #40,d2
+
+.db162_rloop:
+        move.w  (a3)+,d0                | mask
+
+        | planeHi: cookie-cut
+        move.w  (a4)+,d5
+        move.w  d0,d4
+        not.w   d4
+        and.w   d4,(a0,d1.w)
+        and.w   d0,d5
+        or.w    d5,(a0,d1.w)
+
+        | planeLo: cookie-cut
+        move.w  (a5)+,d5
+        move.w  d0,d4
+        not.w   d4
+        and.w   d4,(a1,d1.w)
+        and.w   d0,d5
+        or.w    d5,(a1,d1.w)
+
+        | Clear plane5 in mask area
+        move.w  d0,d4
+        not.w   d4
+        and.w   d4,(a6,d1.w)
+
+        | Next row
+        add.w   d2,d1
+        dbra    d3,.db162_rloop
+
+        moveq   #0,d0
+        bra.s   .db162_exit
+
+.db162_fail:
+        moveq   #1,d0
+.db162_exit:
+        movem.l (sp)+,d2-d7/a2-a6
+        rts

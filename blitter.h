@@ -14,3 +14,6 @@ extern int DrawBob16Asm(UBYTE* screen_mem, const UWORD* mask, const UWORD* data,
 extern int DrawBob32d2Asm(UBYTE* screen_mem, const UWORD* mask,
                            const UWORD* dataHi, const UWORD* dataLo,
                            short x, short y, UBYTE planeHi, UBYTE planeLo);
+extern int DrawBob16d2Asm(UBYTE* screen_mem, const UWORD* mask,
+                           const UWORD* dataHi, const UWORD* dataLo,
+                           short x, short y, UBYTE planeHi, UBYTE planeLo, UWORD rows);
