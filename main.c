@@ -1280,6 +1280,29 @@ int main() {
                 }
             }
 
+            // --- Update enemy shots ---
+            for (int i = 0; i < MAX_ENEMY_SHOTS; i++) {
+                if (!g_EnemyShots[i].active) continue;
+                g_EnemyShots[i].y += 3;
+                if (g_EnemyShots[i].y >= SCREEN_H) g_EnemyShots[i].active = 0;
+            }
+
+            // --- Enemy firing (basic) ---
+            for (int i = 0; i < MAX_ENEMIES; i++) {
+                TEnemy* e = &g_Enemies[i];
+                if (!e->active) continue;
+                if ((g_FrameCounter + i * 7) % 30 == 0) {
+                    for (int j = 0; j < MAX_ENEMY_SHOTS; j++) {
+                        if (!g_EnemyShots[j].active) {
+                            g_EnemyShots[j].active = 1;
+                            g_EnemyShots[j].x = (short)(e->x + ENEMY_W/2);
+                            g_EnemyShots[j].y = (short)(e->y + ENEMY_H);
+                            break;
+                        }
+                    }
+                }
+            }
+
             // --- Update explosions ---
             for (int i = 0; i < MAX_EXPLOSIONS; i++) {
                 if (!g_Explosions[i].active) continue;
