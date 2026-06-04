@@ -490,24 +490,45 @@ DrawBorderAsm:
         lsl.w   #3,d4                   | d4 = d7 * 8
         andi.l  #0xFFFF,d4
 
-        | Load left border (2 longwords from border_data)
+        | --- Plane 1 (BPL2): left border from border_data+0*8192 ---
         move.l  a4,a0
         adda.l  d4,a0
         movem.l (a0),d0-d1
+        movem.l d0-d1,(a1)              | store to PF2 plane 1
 
-        | Store to planes 1,3,5 (left: offset 0)
-        movem.l d0-d1,(a1)
-        movem.l d0-d1,(a2)
-        movem.l d0-d1,(a6)
+        | --- Plane 3 (BPL4): left border from border_data+1*8192 ---
+        move.l  a4,a0
+        adda.l  #8192,a0
+        adda.l  d4,a0
+        movem.l (a0),d0-d1
+        movem.l d0-d1,(a2)              | store to PF2 plane 3
 
-        | Load right border mirrored (2 longwords)
+        | --- Plane 5 (BPL6): left border from border_data+2*8192 ---
+        move.l  a4,a0
+        adda.l  #16384,a0
+        adda.l  d4,a0
+        movem.l (a0),d0-d1
+        movem.l d0-d1,(a6)              | store to PF2 plane 5
+
+        | --- Right border (mirrored): same for mirror data ---
+        | Plane 1 (BPL2) right
         move.l  a5,a0
         adda.l  d4,a0
         movem.l (a0),d0-d1
-
-        | Store to planes 1,3,5 (right: offset 32)
         movem.l d0-d1,32(a1)
+
+        | Plane 3 (BPL4) right
+        move.l  a5,a0
+        adda.l  #8192,a0
+        adda.l  d4,a0
+        movem.l (a0),d0-d1
         movem.l d0-d1,32(a2)
+
+        | Plane 5 (BPL6) right
+        move.l  a5,a0
+        adda.l  #16384,a0
+        adda.l  d4,a0
+        movem.l (a0),d0-d1
         movem.l d0-d1,32(a6)
 
         | Next row: pointers +40
