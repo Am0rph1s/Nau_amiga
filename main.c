@@ -214,7 +214,7 @@ static void ClearGameArea(UBYTE* screen_mem) {
     ClearGameAreaAsm(screen_mem);
 }
 
-// Draw foreground border (64px) on PF2 — left + mirrored right, independent scroll
+// Draw foreground border (64px, 3-bitplane) on PF2 — left + mirrored right, independent scroll
 static void DrawBorder(UBYTE* screen_mem, short scroll_y) {
     int border_h = BORDER_H;
     scroll_y = scroll_y % border_h;
@@ -225,29 +225,29 @@ static void DrawBorder(UBYTE* screen_mem, short scroll_y) {
 
     for (int row = 0; row < SCREEN_H; row++) {
         int src_row = (scroll_y + row) % border_h;
-        const UBYTE* mask_row = border_mask + src_row * (BORDER_W / 8);
-        const UBYTE* mask_mirror_row = border_mask_mirror + src_row * (BORDER_W / 8);
 
         for (int p = 0; p < 3; p++) {
+            int plane_off = p * BORDER_PLANE_SIZE + src_row * BORDER_ROW_BYTES;
             UBYTE* dst = row_ptr + pf2_planes[p] * PLANE_BYTES;
+
             // Left border: bytes 0-7 (64px)
-            for (int b = 0; b < BORDER_W / 8; b++)
-                dst[b] = mask_row[b];
-            // Right border: bytes 32-39 (last 64px, at x=256)
-            for (int b = 0; b < BORDER_W / 8; b++)
-                dst[32 + b] = mask_mirror_row[b];
+            for (int b = 0; b < BORDER_ROW_BYTES; b++)
+                dst[b] = border_data[plane_off + b];
+
+            // Right border: bytes 32-39 (at x=256, mirrored)
+            for (int b = 0; b < BORDER_ROW_BYTES; b++)
+                dst[32 + b] = border_mirror_data[plane_off + b];
         }
         row_ptr += ROW_BYTES;
     }
 }
 
-// Check ship collision with border mask
+// Check ship collision with border (any non-zero pixel = solid)
 static short CheckBorderCollision(short ship_x, short ship_y, short scroll_y) {
     int border_h = BORDER_H;
     scroll_y = scroll_y % border_h;
     if (scroll_y < 0) scroll_y += border_h;
 
-    // Ship hitbox corners
     int sx0 = ship_x + SHIP_HIT_OX;
     int sy0 = ship_y + SHIP_HIT_OY;
     int sx1 = sx0 + SHIP_HIT_W;
@@ -256,24 +256,30 @@ static short CheckBorderCollision(short ship_x, short ship_y, short scroll_y) {
     for (int sy = sy0; sy < sy1; sy++) {
         if (sy < 0 || sy >= SCREEN_H) continue;
         int src_row = (scroll_y + sy) % border_h;
-        const UBYTE* mask_row = border_mask + src_row * (BORDER_W / 8);
-        const UBYTE* mask_mirror_row = border_mask_mirror + src_row * (BORDER_W / 8);
+        int row_base = src_row * BORDER_ROW_BYTES;
 
         for (int sx = sx0; sx < sx1; sx++) {
             if (sx < 0 || sx >= SCREEN_W) continue;
+            int byte_off = 0, bit = 0;
+            const UBYTE* data;
 
-            // Check left border (x=0..63)
             if (sx < BORDER_W) {
-                int byte_off = sx / 8;
-                int bit = 7 - (sx & 7);
-                if (mask_row[byte_off] & (1 << bit)) return 1;
-            }
-            // Check right border (x=256..319)
-            if (sx >= SCREEN_W - BORDER_W) {
+                byte_off = sx / 8;
+                bit = 7 - (sx & 7);
+                data = border_data;
+            } else if (sx >= SCREEN_W - BORDER_W) {
                 int rx = sx - (SCREEN_W - BORDER_W);
-                int byte_off = rx / 8;
-                int bit = 7 - (rx & 7);
-                if (mask_mirror_row[byte_off] & (1 << bit)) return 1;
+                byte_off = rx / 8;
+                bit = 7 - (rx & 7);
+                data = border_mirror_data;
+            } else {
+                continue;
+            }
+
+            // Check all 3 planes — if any has a bit set, it's solid
+            for (int p = 0; p < 3; p++) {
+                if (data[p * BORDER_PLANE_SIZE + row_base + byte_off] & (1 << bit))
+                    return 1;
             }
         }
     }
@@ -606,9 +612,9 @@ static UWORD g_Palette[32] = {
     0x0888,              // 10  PF2 mid grey
     0x0CCC,              // 11  PF2 light grey
     0x0FF0,              // 12  PF2 yellow (shots)
-    0x0F60,              // 13  PF2 orange (explosions)
-    0x0F00,              // 14  PF2 red
-    0x0756,              // 15  PF2 border wall
+    0x0212,              // 13  PF2 border dark
+    0x0756,              // 14  PF2 border mid
+    0x0434,              // 15  PF2 border light
     // Slots 16-31: unused
     0x0000, 0x0000, 0x0000, 0x0000,
     0x0000, 0x0000, 0x0000, 0x0000,
@@ -962,7 +968,7 @@ static void RenderFrame(UBYTE* screen_mem) {
             TExplosion* ex = &g_Explosions[i];
             if (!ex->active) continue;
             UWORD fr = (UWORD)((ex->frame >> 1) & 3);
-            DrawBob16(screen_mem, g_ExpMasks[fr], g_ExpData[fr], ex->x, ex->y, 0x05, 8);
+            DrawBob16(screen_mem, g_ExpMasks[fr], g_ExpData[fr], ex->x, ex->y, 0x03, 8);
         }
     }
 }

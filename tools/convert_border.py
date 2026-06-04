@@ -1,19 +1,36 @@
-"""Convert border PNG (64xN) to 1-bitplane mask + 3-bitplane PF2 tile data."""
+"""Convert border PNG (64xN) to 3-bitplane PF2 tile data with color remapping."""
 from PIL import Image
 import sys, os
 
-def pixels_to_mask(pixels, w, h):
-    """Convert indexed pixels to 1-bitplane mask. Index 0 = transparent."""
+# PF2 color slot mapping for border (old index -> PF2 slot)
+# index 0 = transparent -> PF2 color 0 (slot 8, no bits)
+# index 1 = dark accent -> PF2 color 5 (slot 13, bits 101 = planes 0+2)
+# index 2 = light brown -> PF2 color 6 (slot 14, bits 110 = planes 1+2)
+# index 3 = dark brown  -> PF2 color 7 (slot 15, bits 111 = all 3)
+COLOR_REMAP = {
+    0: 0,  # transparent (slot 8)
+    1: 5,  # dark accent (slot 13)
+    2: 6,  # light brown (slot 14)
+    3: 7,  # dark brown (slot 15)
+}
+
+TILE_W, TILE_H = 16, 16
+
+def pixels_to_planar_remapped(pixels, w, h, remap):
+    """Convert indexed pixels to 3 planar bitplanes with color remapping.
+    Returns 3 bytearrays (BPL2, BPL4, BPL6 for PF2)."""
     plane_size = (w // 8) * h
-    mask = bytearray(plane_size)
+    planes = [bytearray(plane_size) for _ in range(3)]
     for y in range(h):
         for x in range(w):
             idx = pixels[y * w + x]
-            if idx != 0:  # non-zero = solid
-                byte_off = y * (w // 8) + (x // 8)
-                bit = 7 - (x & 7)
-                mask[byte_off] |= (1 << bit)
-    return mask
+            color = remap.get(idx, 0)
+            byte_off = y * (w // 8) + (x // 8)
+            bit = 7 - (x & 7)
+            if color & 1: planes[0][byte_off] |= (1 << bit)  # BPL2
+            if color & 2: planes[1][byte_off] |= (1 << bit)  # BPL4
+            if color & 4: planes[2][byte_off] |= (1 << bit)  # BPL6
+    return planes
 
 def to_amiga_color(rgb):
     r4 = (rgb[0] >> 4) & 0xF
@@ -21,99 +38,89 @@ def to_amiga_color(rgb):
     b4 = (rgb[2] >> 4) & 0xF
     return (r4 << 8) | (g4 << 4) | b4
 
+# Bit reversal table for mirroring
+def rev8(b):
+    return int(f'{b:08b}'[::-1], 2)
+BIT_REV = [rev8(i) for i in range(256)]
+
 def main():
     png_path = os.path.join(os.path.dirname(__file__), '..', 'escenari', 'border desert.png')
-
     img = Image.open(png_path)
     if img.mode != 'P':
         print("ERROR: border must be indexed PNG")
         sys.exit(1)
 
     w, h = img.size
-    print(f"Border: {w}x{h}, mode={img.mode}")
+    print(f"Border: {w}x{h}")
 
     pal = img.getpalette()
     pixels = list(img.getdata())
-    used = sorted(set(pixels))
-    print(f"Used indices: {used}")
 
-    # Palette
-    amiga_pal = []
+    # Convert to planar with remapping
+    planes = pixels_to_planar_remapped(pixels, w, h, COLOR_REMAP)
+
+    # Generate mirrored planes
+    row_bytes = w // 8  # Should be 4 for 64px? No, 64/8 = 8
+    planes_mirror = [bytearray(len(planes[0])) for _ in range(3)]
+    for p in range(3):
+        for y in range(h):
+            row_src = y * row_bytes
+            for x in range(row_bytes):
+                planes_mirror[p][row_src + x] = BIT_REV[planes[p][row_src + (row_bytes - 1 - x)]]
+
+    # Flatten all plane data
+    border_data = b''
+    for p in range(3):
+        border_data += bytes(planes[p])
+    border_mirror_data = b''
+    for p in range(3):
+        border_mirror_data += bytes(planes_mirror[p])
+
+    # Palette reference
+    amiga_pal = {}
     for i in range(len(pal)//3):
-        r, g, b = pal[i*3], pal[i*3+1], pal[i*3+2]
-        amiga_pal.append(to_amiga_color((r,g,b)))
+        r,g,b = pal[i*3], pal[i*3+1], pal[i*3+2]
+        amiga_pal[i] = to_amiga_color((r,g,b))
 
-    # 1-bitplane mask
-    mask = pixels_to_mask(pixels, w, h)
-
-    # Mirrored mask (for right side: reverse byte order + bit order)
-    mask_mirror = bytearray(len(mask))
-    bit_reverse = [
-        0x00,0x80,0x40,0xC0,0x20,0xA0,0x60,0xE0,0x10,0x90,0x50,0xD0,0x30,0xB0,0x70,0xF0,
-        0x08,0x88,0x48,0xC8,0x28,0xA8,0x68,0xE8,0x18,0x98,0x58,0xD8,0x38,0xB8,0x78,0xF8,
-        0x04,0x84,0x44,0xC4,0x24,0xA4,0x64,0xE4,0x14,0x94,0x54,0xD4,0x34,0xB4,0x74,0xF4,
-        0x0C,0x8C,0x4C,0xCC,0x2C,0xAC,0x6C,0xEC,0x1C,0x9C,0x5C,0xDC,0x3C,0xBC,0x7C,0xFC,
-        0x02,0x82,0x42,0xC2,0x22,0xA2,0x62,0xE2,0x12,0x92,0x52,0xD2,0x32,0xB2,0x72,0xF2,
-        0x0A,0x8A,0x4A,0xCA,0x2A,0xAA,0x6A,0xEA,0x1A,0x9A,0x5A,0xDA,0x3A,0xBA,0x7A,0xFA,
-        0x06,0x86,0x46,0xC6,0x26,0xA6,0x66,0xE6,0x16,0x96,0x56,0xD6,0x36,0xB6,0x76,0xF6,
-        0x0E,0x8E,0x4E,0xCE,0x2E,0xAE,0x6E,0xEE,0x1E,0x9E,0x5E,0xDE,0x3E,0xBE,0x7E,0xFE,
-        0x01,0x81,0x41,0xC1,0x21,0xA1,0x61,0xE1,0x11,0x91,0x51,0xD1,0x31,0xB1,0x71,0xF1,
-        0x09,0x89,0x49,0xC9,0x29,0xA9,0x69,0xE9,0x19,0x99,0x59,0xD9,0x39,0xB9,0x79,0xF9,
-        0x05,0x85,0x45,0xC5,0x25,0xA5,0x65,0xE5,0x15,0x95,0x55,0xD5,0x35,0xB5,0x75,0xF5,
-        0x0D,0x8D,0x4D,0xCD,0x2D,0xAD,0x6D,0xED,0x1D,0x9D,0x5D,0xDD,0x3D,0xBD,0x7D,0xFD,
-        0x03,0x83,0x43,0xC3,0x23,0xA3,0x63,0xE3,0x13,0x93,0x53,0xD3,0x33,0xB3,0x73,0xF3,
-        0x0B,0x8B,0x4B,0xCB,0x2B,0xAB,0x6B,0xEB,0x1B,0x9B,0x5B,0xDB,0x3B,0xBB,0x7B,0xFB,
-        0x07,0x87,0x47,0xC7,0x27,0xA7,0x67,0xE7,0x17,0x97,0x57,0xD7,0x37,0xB7,0x77,0xF7,
-        0x0F,0x8F,0x4F,0xCF,0x2F,0xAF,0x6F,0xEF,0x1F,0x9F,0x5F,0xDF,0x3F,0xBF,0x7F,0xFF,
-    ]
-    row_bytes = w // 8
-    for y in range(h):
-        row_src = y * row_bytes
-        row_dst = y * row_bytes
-        for x in range(row_bytes):
-            mask_mirror[row_dst + x] = bit_reverse[mask[row_src + (row_bytes - 1 - x)]]
-
-    # Write .h file
+    # Write .h
     out_path = os.path.join(os.path.dirname(__file__), '..', 'gfx_border.h')
-    name = os.path.splitext(os.path.basename(png_path))[0]
-
     with open(out_path, 'w') as f:
         f.write(f'// Auto-generated from escenari/{os.path.basename(png_path)}\n')
-        f.write(f'// {w}x{h} border mask, 1 bitplane\n')
+        f.write(f'// {w}x{h}, 3-bitplane PF2 with color remapping\n')
         f.write('#pragma once\n')
         f.write('#include <exec/types.h>\n\n')
 
-        f.write(f'#define BORDER_W     {w}\n')
-        f.write(f'#define BORDER_H     {h}\n')
-        f.write(f'#define BORDER_BYTES {len(mask)}\n')
-        f.write(f'#define BORDER_WW    {(w//16)}\n\n')
+        f.write(f'#define BORDER_W          {w}\n')
+        f.write(f'#define BORDER_H          {h}\n')
+        f.write(f'#define BORDER_ROW_BYTES  {row_bytes}\n')
+        f.write(f'#define BORDER_PLANE_SIZE {len(planes[0])}\n\n')
 
-        # Palette (original, for reference)
-        f.write(f'// Original PNG palette (Amiga 12-bit)\n')
-        f.write(f'static const UWORD border_pal_amiga[{len(amiga_pal)}] = {{\n')
-        for i, c in enumerate(amiga_pal):
-            f.write(f'    0x{c:04X},  // {i}\n')
-        f.write('};\n\n')
+        # Original PNG palette (reference)
+        f.write(f'// PNG palette -> PF2 slot mapping\n')
+        f.write(f'// idx 0 ({amiga_pal[0]:04X}) -> PF2 trans  (slot  8)\n')
+        f.write(f'// idx 1 ({amiga_pal[1]:04X}) -> PF2 color5 (slot 13)\n')
+        f.write(f'// idx 2 ({amiga_pal[2]:04X}) -> PF2 color6 (slot 14)\n')
+        f.write(f'// idx 3 ({amiga_pal[3]:04X}) -> PF2 color7 (slot 15)\n\n')
 
-        # Mask data
-        f.write(f'static const UBYTE border_mask[BORDER_BYTES] = {{\n')
-        for i in range(0, len(mask), 16):
+        # Left border data (3 planes sequential)
+        f.write(f'static const UBYTE border_data[{len(border_data)}] = {{\n')
+        for i in range(0, len(border_data), 16):
             f.write('    ')
-            for j in range(i, min(i+16, len(mask))):
-                f.write(f'0x{mask[j]:02X},')
+            for j in range(i, min(i+16, len(border_data))):
+                f.write(f'0x{border_data[j]:02X},')
             f.write('\n')
         f.write('};\n\n')
 
-        # Mirrored mask (for right side)
-        f.write(f'static const UBYTE border_mask_mirror[BORDER_BYTES] = {{\n')
-        for i in range(0, len(mask_mirror), 16):
+        # Right border (mirrored) data
+        f.write(f'static const UBYTE border_mirror_data[{len(border_mirror_data)}] = {{\n')
+        for i in range(0, len(border_mirror_data), 16):
             f.write('    ')
-            for j in range(i, min(i+16, len(mask_mirror))):
-                f.write(f'0x{mask_mirror[j]:02X},')
+            for j in range(i, min(i+16, len(border_mirror_data))):
+                f.write(f'0x{border_mirror_data[j]:02X},')
             f.write('\n')
         f.write('};\n')
 
-    print(f"Written: {out_path} ({len(mask)} bytes mask)")
+    print(f"Written: {out_path} ({len(border_data)} bytes per side)")
 
 if __name__ == '__main__':
     main()
