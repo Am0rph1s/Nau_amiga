@@ -30,7 +30,7 @@ def pixels_to_planar(pixels, w, h, nplanes):
 
 def main():
     if len(sys.argv) < 2:
-        png_path = os.path.join(os.path.dirname(__file__), '..', 'escenari', 'desert_8c.png')
+        png_path = os.path.join(os.path.dirname(__file__), '..', 'escenari', 'Desert_320.png')
     else:
         png_path = sys.argv[1]
 

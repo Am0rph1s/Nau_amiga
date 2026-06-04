@@ -295,7 +295,7 @@ static void InitTilemapBG(UBYTE* bg_buf) {
         for (int tx = 0; tx < BG_MAP_COLS; tx++) {
             UWORD tile_idx = bg_tilemap[map_row * BG_MAP_COLS + tx];
             const UBYTE* tile = bg_tiles[tile_idx];
-            int scr_x = GAME_X0 + tx * BG_TILE_W;
+            int scr_x = tx * BG_TILE_W;
 
             for (int tile_row = 0; tile_row < BG_TILE_H; tile_row++) {
                 int dst_y = map_row * BG_TILE_H + tile_row;
@@ -987,14 +987,10 @@ int main() {
 
     InitHiScores();
     ResetGameSession();
-    ParallaxInit();
 
     // Load tilemap palette into PF1 slots 0-7
     for (int i = 0; i < BG_PAL_AMIGA_COUNT && i < 8; i++)
         g_Palette[i] = bg_pal_amiga[i];
-    // Override slots 0,7 with wall colors (both free — tilemap uses indices 1-6)
-    g_Palette[0] = 0x0212;  // dark rock
-    g_Palette[7] = 0x0753;  // light sand
 
     // --- Allocate screen memory: double buffer (6 bitplanes × 2) ---
     const ULONG plane_size = (SCREEN_W / 8) * SCREEN_H; // 320/8 * 256 = 10240 bytes
@@ -1017,29 +1013,7 @@ int main() {
                 dst[row * ROW_BYTES + b] = src[row * ROW_BYTES + b];
         }
     }
-    // Apply rocky wall texture to wall area (plane 0 = tile pattern, planes 2,4 = 0xFF)
-    ParallaxInit();
-    {
-        UBYTE* p0 = bg_buf + 0 * BG_PLANE_BYTES;
-        UBYTE* p2 = bg_buf + 1 * BG_PLANE_BYTES;
-        UBYTE* p4 = bg_buf + 2 * BG_PLANE_BYTES;
-        int total_rows = BG_MAP_ROWS * BG_TILE_H;
-        for (int row = 0; row < total_rows; row++) {
-            short t = (short)((row) & (PAR_TILE_H - 1));
-            UWORD solid = g_TileSolid[t];
-            UWORD deco  = g_TileDeco[t];
-            UBYTE* r0 = p0 + row * ROW_BYTES;
-            UBYTE* r2 = p2 + row * ROW_BYTES;
-            UBYTE* r4 = p4 + row * ROW_BYTES;
-            r0[0] = (UBYTE)(deco >> 8);
-            r0[1] = (UBYTE)(solid & 0xFF);
-            r0[34] = (UBYTE)(deco & 0xFF);
-            r0[35] = (UBYTE)(solid >> 8);
-            // Planes 2,4: copy plane0 pattern → color indices 0 and 7
-            r2[0] = r0[0]; r2[1] = r0[1]; r2[34] = r0[34]; r2[35] = r0[35];
-            r4[0] = r0[0]; r4[1] = r0[1]; r4[34] = r0[34]; r4[35] = r0[35];
-        }
-    }
+    // (walls removed — 320px tilemap covers full screen)
 
     // --- Allocate double-buffered copper lists ---
     USHORT* copper1 = (USHORT*)AllocMem(1024, MEMF_CHIP | MEMF_CLEAR);
