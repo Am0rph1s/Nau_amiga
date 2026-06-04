@@ -220,34 +220,23 @@ static void DrawBorder(UBYTE* screen_mem, short scroll_y) {
     scroll_y = scroll_y % border_h;
     if (scroll_y < 0) scroll_y += border_h;
 
+    static const int pf2_offsets[3] = { 1 * PLANE_BYTES, 3 * PLANE_BYTES, 5 * PLANE_BYTES };
     UBYTE* row_ptr = screen_mem;
 
     for (int row = 0; row < SCREEN_H; row++) {
         int src_row = (scroll_y + row) % border_h;
+        int src_off = src_row * BORDER_ROW_BYTES;
 
-        // PF2 plane 1 (BPL2): left border (4 words) + right border (4 words mirrored)
-        {
-            UWORD* dst = (UWORD*)(row_ptr + 1 * PLANE_BYTES);
-            const UBYTE* src = border_data + 0 * BORDER_PLANE_SIZE + src_row * BORDER_ROW_BYTES;
-            const UBYTE* msrc = border_mirror_data + 0 * BORDER_PLANE_SIZE + src_row * BORDER_ROW_BYTES;
-            for (int w = 0; w < 4; w++) dst[w] = ((UWORD)src[w*2] << 8) | src[w*2+1];
-            for (int w = 0; w < 4; w++) dst[16 + w] = ((UWORD)msrc[w*2] << 8) | msrc[w*2+1];
-        }
-        // PF2 plane 3 (BPL4)
-        {
-            UWORD* dst = (UWORD*)(row_ptr + 3 * PLANE_BYTES);
-            const UBYTE* src = border_data + 1 * BORDER_PLANE_SIZE + src_row * BORDER_ROW_BYTES;
-            const UBYTE* msrc = border_mirror_data + 1 * BORDER_PLANE_SIZE + src_row * BORDER_ROW_BYTES;
-            for (int w = 0; w < 4; w++) dst[w] = ((UWORD)src[w*2] << 8) | src[w*2+1];
-            for (int w = 0; w < 4; w++) dst[16 + w] = ((UWORD)msrc[w*2] << 8) | msrc[w*2+1];
-        }
-        // PF2 plane 5 (BPL6)
-        {
-            UWORD* dst = (UWORD*)(row_ptr + 5 * PLANE_BYTES);
-            const UBYTE* src = border_data + 2 * BORDER_PLANE_SIZE + src_row * BORDER_ROW_BYTES;
-            const UBYTE* msrc = border_mirror_data + 2 * BORDER_PLANE_SIZE + src_row * BORDER_ROW_BYTES;
-            for (int w = 0; w < 4; w++) dst[w] = ((UWORD)src[w*2] << 8) | src[w*2+1];
-            for (int w = 0; w < 4; w++) dst[16 + w] = ((UWORD)msrc[w*2] << 8) | msrc[w*2+1];
+        for (int p = 0; p < 3; p++) {
+            UBYTE* dst = row_ptr + pf2_offsets[p];
+            const UBYTE* src = border_data + p * BORDER_PLANE_SIZE + src_off;
+            const UBYTE* msrc = border_mirror_data + p * BORDER_PLANE_SIZE + src_off;
+
+            dst[0] = src[0]; dst[1] = src[1]; dst[2] = src[2]; dst[3] = src[3];
+            dst[4] = src[4]; dst[5] = src[5]; dst[6] = src[6]; dst[7] = src[7];
+
+            dst[32] = msrc[0]; dst[33] = msrc[1]; dst[34] = msrc[2]; dst[35] = msrc[3];
+            dst[36] = msrc[4]; dst[37] = msrc[5]; dst[38] = msrc[6]; dst[39] = msrc[7];
         }
         row_ptr += ROW_BYTES;
     }
