@@ -220,23 +220,34 @@ static void DrawBorder(UBYTE* screen_mem, short scroll_y) {
     scroll_y = scroll_y % border_h;
     if (scroll_y < 0) scroll_y += border_h;
 
-    static const UBYTE pf2_planes[3] = { 1, 3, 5 };
     UBYTE* row_ptr = screen_mem;
 
     for (int row = 0; row < SCREEN_H; row++) {
         int src_row = (scroll_y + row) % border_h;
 
-        for (int p = 0; p < 3; p++) {
-            int plane_off = p * BORDER_PLANE_SIZE + src_row * BORDER_ROW_BYTES;
-            UBYTE* dst = row_ptr + pf2_planes[p] * PLANE_BYTES;
-
-            // Left border: bytes 0-7 (64px)
-            for (int b = 0; b < BORDER_ROW_BYTES; b++)
-                dst[b] = border_data[plane_off + b];
-
-            // Right border: bytes 32-39 (at x=256, mirrored)
-            for (int b = 0; b < BORDER_ROW_BYTES; b++)
-                dst[32 + b] = border_mirror_data[plane_off + b];
+        // PF2 plane 1 (BPL2): left border (4 words) + right border (4 words mirrored)
+        {
+            UWORD* dst = (UWORD*)(row_ptr + 1 * PLANE_BYTES);
+            const UBYTE* src = border_data + 0 * BORDER_PLANE_SIZE + src_row * BORDER_ROW_BYTES;
+            const UBYTE* msrc = border_mirror_data + 0 * BORDER_PLANE_SIZE + src_row * BORDER_ROW_BYTES;
+            for (int w = 0; w < 4; w++) dst[w] = ((UWORD)src[w*2] << 8) | src[w*2+1];
+            for (int w = 0; w < 4; w++) dst[16 + w] = ((UWORD)msrc[w*2] << 8) | msrc[w*2+1];
+        }
+        // PF2 plane 3 (BPL4)
+        {
+            UWORD* dst = (UWORD*)(row_ptr + 3 * PLANE_BYTES);
+            const UBYTE* src = border_data + 1 * BORDER_PLANE_SIZE + src_row * BORDER_ROW_BYTES;
+            const UBYTE* msrc = border_mirror_data + 1 * BORDER_PLANE_SIZE + src_row * BORDER_ROW_BYTES;
+            for (int w = 0; w < 4; w++) dst[w] = ((UWORD)src[w*2] << 8) | src[w*2+1];
+            for (int w = 0; w < 4; w++) dst[16 + w] = ((UWORD)msrc[w*2] << 8) | msrc[w*2+1];
+        }
+        // PF2 plane 5 (BPL6)
+        {
+            UWORD* dst = (UWORD*)(row_ptr + 5 * PLANE_BYTES);
+            const UBYTE* src = border_data + 2 * BORDER_PLANE_SIZE + src_row * BORDER_ROW_BYTES;
+            const UBYTE* msrc = border_mirror_data + 2 * BORDER_PLANE_SIZE + src_row * BORDER_ROW_BYTES;
+            for (int w = 0; w < 4; w++) dst[w] = ((UWORD)src[w*2] << 8) | src[w*2+1];
+            for (int w = 0; w < 4; w++) dst[16 + w] = ((UWORD)msrc[w*2] << 8) | msrc[w*2+1];
         }
         row_ptr += ROW_BYTES;
     }
@@ -928,7 +939,7 @@ static void BuildCopperListEx(USHORT* cop, const UBYTE** pf1_planes, const UBYTE
 
 static void RenderFrame(UBYTE* screen_mem) {
     ClearGameArea(screen_mem);
-    // DrawBorder(screen_mem, g_BorderScrollY);
+    DrawBorder(screen_mem, g_BorderScrollY);
     if (g_StarsEnabled) {
         for (int i = 0; i < N_STARS_1; i++) DrawPixel(screen_mem, g_Stars1[i].x, g_Stars1[i].y, 1);
         for (int i = 0; i < N_STARS_2; i++) DrawPixel(screen_mem, g_Stars2[i].x, g_Stars2[i].y, 2);
