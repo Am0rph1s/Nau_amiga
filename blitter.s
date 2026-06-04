@@ -479,7 +479,8 @@ DrawBorderAsm:
         | Plane base pointers
         lea     10240(a3),a1            | a1 = plane 1 (BPL2)
         lea     30720(a3),a2            | a2 = plane 3 (3*10240, BPL4)
-        lea     51200(a3),a6            | a6 = plane 5 (5*10240, BPL6)
+        lea     30720(a3),a6            | a6 = temp plane 3
+        lea     20480(a6),a6            | a6 = plane 5 (51200 = 30720+20480, BPL6)
 
         | Row loop (256 iterations)
         move.w  #255,d6
