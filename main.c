@@ -294,6 +294,8 @@ static void InitTilemapBG(UBYTE* bg_buf) {
 static void DrawBob16(UBYTE* screen_mem,
                       const UWORD* mask, const UWORD* data,
                       short x, short y, UBYTE colorMask, UWORD rows) {
+    if (!DrawBob16Asm(screen_mem, mask, data, x, y, colorMask, rows))
+        return;  // fast path succeeded
     if (x <= -16 || x >= SCREEN_W || y <= -(short)rows || y >= SCREEN_H) return;
     UWORD shift = (UWORD)(x & 15);
     const UWORD* m = mask;

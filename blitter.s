@@ -546,3 +546,116 @@ DrawBorderAsm:
 .db_done:
         movem.l (sp)+,d0-d7/a2-a6
         rts
+
+| ============================================================
+| int DrawBob16Asm(UBYTE* screen_mem, const UWORD* mask, const UWORD* data,
+|                  short x, short y, UBYTE colorMask, UWORD rows)
+|
+| Fast-path for word-aligned (x&1==0), fully visible 16px bobs on PF2.
+| Returns 0 on success (drawn), 1 if needs C fallback.
+| ============================================================
+        .global DrawBob16Asm
+DrawBob16Asm:
+        movem.l d2-d7/a2-a6,-(sp)      | 11 regs = 44 bytes
+
+        move.l  48(sp),a2               | a2 = screen_mem
+        move.l  52(sp),a3               | a3 = mask ptr
+        move.l  56(sp),a4               | a4 = data ptr
+        move.w  62(sp),d7               | d7 = x (low 16)
+        move.w  66(sp),d6               | d6 = y
+        move.w  70(sp),d5               | d5 = colorMask
+        move.w  74(sp),d4               | d4 = rows
+
+        | --- Fast-path eligibility checks ---
+        tst.w   d4
+        beq     .db16_fail
+        cmpi.w  #-16,d7
+        ble     .db16_fail
+        cmpi.w  #304,d7
+        bgt     .db16_fail              | x > 304, right word would be off-screen
+        btst    #0,d7
+        bne     .db16_fail              | not word-aligned
+        tst.w   d6
+        bmi     .db16_fail              | y < 0, needs clipping
+
+        | --- Setup ---
+        ; Plane base registers: a0=plane1 (10240), a1=plane3 (30720), a5=plane5 (51200)
+        lea     10240(a2),a0
+        lea     30720(a2),a1
+        lea     30720(a2),a5
+        lea     20480(a5),a5
+
+        ; wx = x >> 4 (word index), byte offset = wx * 2
+        move.w  d7,d2
+        lsr.w   #4,d2                   | d2 = wx
+        add.w   d2,d2                   | d2 = wx * 2 (byte offset)
+
+        ; row_base_word = y * 40 + wx * 2
+        move.w  d6,d3
+        lsl.w   #5,d3                   | d3 = y * 32
+        move.w  d6,d0
+        lsl.w   #3,d0                   | d0 = y * 8
+        add.w   d0,d3                   | d3 = y * 40
+        add.w   d2,d3                   | d3 = y*40 + wx*2 (byte offset)
+
+        ; Check row bounds
+        move.w  d6,d0
+        add.w   d4,d0                   | d0 = y + rows
+        cmpi.w  #256,d0
+        bgt     .db16_fail              | bottom clip needed
+
+        ; Per-row increment = 40 bytes per row
+        moveq   #40,d2
+
+        | --- Row loop ---
+        subq.w  #1,d4                   | rows - 1 for dbra
+.db16_rloop:
+        ; Load mask word
+        move.w  (a3)+,d0                | d0 = mask[row]
+
+        ; Apply to plane 1 (BPL2)
+        btst    #0,d5
+        beq.s   .db16_p1c
+        or.w    d0,(a0,d3.w)
+        bra.s   .db16_p1d
+.db16_p1c:
+        move.w  d0,d1
+        not.w   d1
+        and.w   d1,(a0,d3.w)
+.db16_p1d:
+
+        ; Apply to plane 3 (BPL4)
+        btst    #1,d5
+        beq.s   .db16_p3c
+        or.w    d0,(a1,d3.w)
+        bra.s   .db16_p3d
+.db16_p3c:
+        move.w  d0,d1
+        not.w   d1
+        and.w   d1,(a1,d3.w)
+.db16_p3d:
+
+        ; Apply to plane 5 (BPL6)
+        btst    #2,d5
+        beq.s   .db16_p5c
+        or.w    d0,(a5,d3.w)
+        bra.s   .db16_p5d
+.db16_p5c:
+        move.w  d0,d1
+        not.w   d1
+        and.w   d1,(a5,d3.w)
+.db16_p5d:
+
+        ; Next row
+        adda.l  #2,a4                   | advance data pointer (unused in fast path but kept)
+        add.w   d2,d3                   | row_word_offset += 20
+        dbra    d4,.db16_rloop
+
+        moveq   #0,d0                   | success
+        bra.s   .db16_exit
+
+.db16_fail:
+        moveq   #1,d0                   | fallback needed
+.db16_exit:
+        movem.l (sp)+,d2-d7/a2-a6
+        rts
