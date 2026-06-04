@@ -597,15 +597,22 @@ static UWORD g_Palette[32] = {
     0x0212,              // 13  PF2 border dark
     0x0756,              // 14  PF2 border mid
     0x0434,              // 15  PF2 border light
-    // Slots 16-19: hardware sprites 0-1 (enemy shots)
+    // Slots 16-28: hardware sprites (enemy shots, 4 sprites, red outline + white fill)
     0x0000,              // 16  spare
-    0x0F00,              // 17  HW sprite red (outline)
-    0x0000,              // 18  HW sprite unused
-    0x0FFF,              // 19  HW sprite white (fill)
-    // Slots 20-31: unused
-    0x0000, 0x0000, 0x0000, 0x0000,
-    0x0000, 0x0000, 0x0000, 0x0000,
-    0x0000, 0x0000, 0x0000, 0x0000,
+    0x0F00,              // 17  SPR0 outline (red)
+    0x0000,              // 18  SPR0 unused
+    0x0FFF,              // 19  SPR0 fill (white)
+    0x0F00,              // 20  SPR1 outline
+    0x0000,              // 21  SPR1 unused
+    0x0FFF,              // 22  SPR1 fill
+    0x0F00,              // 23  SPR2 outline
+    0x0000,              // 24  SPR2 unused
+    0x0FFF,              // 25  SPR2 fill
+    0x0F00,              // 26  SPR3 outline
+    0x0000,              // 27  SPR3 unused
+    0x0FFF,              // 28  SPR3 fill
+    // Slots 29-31: unused
+    0x0000, 0x0000, 0x0000,
 };
 
 // ============================================================================
@@ -1009,7 +1016,7 @@ int main() {
 
     // --- Hardware sprite data for enemy shots (16x8, single array shared by all 8 sprites) ---
     #define HWSPR_H 8
-    static const UWORD g_HwSprData[(HWSPR_H+1)*2] = {
+    static UWORD g_HwSprData[(HWSPR_H+1)*2] = {
         0x0180,0x0000, 0x03C0,0x0180, 0x07E0,0x03C0, 0x0FF0,0x07E0,
         0x0FF0,0x07E0, 0x07E0,0x03C0, 0x03C0,0x0180, 0x0180,0x0000,
         0x0000,0x0000
@@ -1036,22 +1043,27 @@ int main() {
     custom->copjmp1 = 0x7fff;
     custom->dmacon = DMAF_SETCLR | DMAF_MASTER | DMAF_RASTER | DMAF_COPPER | DMAF_BLITTER | DMAF_SPRITE;
 
-    // --- Init hardware sprite pointers (DMA 0-7, enemy shots) ---
+    // --- Init hardware sprite pointers (DMA 0-3, enemy shots) ---
     {
         ULONG addr = (ULONG)g_HwSprData;
         USHORT hw = (USHORT)(addr >> 16);
         USHORT lw = (USHORT)addr;
-        for (int s = 0; s < 8; s++) {
+        for (int s = 0; s < 4; s++) {
             volatile USHORT* ptr = (volatile USHORT*)(0xDFF120 + s*4);
-            ptr[0] = hw;  // SPRxPTH
-            ptr[1] = lw;  // SPRxPTL
+            ptr[0] = hw;
+            ptr[1] = lw;
         }
     }
-    // Hide all sprites
-    for (int s = 0; s < 8; s++) {
+    for (int s = 0; s < 4; s++) {
         volatile USHORT* pos = (volatile USHORT*)(0xDFF140 + s*8);
         pos[0] = (USHORT)(256 << 8);
         pos[1] = 0;
+    }
+    // Test: show sprite 0 at fixed position
+    {
+        volatile USHORT* spr = (volatile USHORT*)0xDFF140;
+        spr[0] = (USHORT)((150 << 8) | (100 >> 1));  // y=150, x=100
+        spr[1] = (USHORT)((100 & 1) << 0);
     }
 
     // Install VBlank interrupt
@@ -1208,10 +1220,10 @@ int main() {
                 if (g_Shots[i].y < GAME_Y0) g_Shots[i].active = 0;
             }
 
-            // --- Update hardware sprite positions (DMA 0-7) for enemy shots ---
+            // --- Update hardware sprite positions (DMA 0-3) for enemy shots ---
             {
                 int spr_idx = 0;
-                for (int i = 0; i < MAX_ENEMY_SHOTS && spr_idx < 8; i++) {
+                for (int i = 0; i < MAX_ENEMY_SHOTS && spr_idx < 4; i++) {
                     if (!g_EnemyShots[i].active) continue;
                     volatile USHORT* spr = (volatile USHORT*)(0xDFF140 + spr_idx * 8);
                     short sx = g_EnemyShots[i].x, sy = g_EnemyShots[i].y;
@@ -1219,8 +1231,7 @@ int main() {
                     spr[1] = (USHORT)(((sy >> 7) & 2) | ((sx & 1) << 0));
                     spr_idx++;
                 }
-                // Hide remaining sprites
-                for (; spr_idx < 8; spr_idx++) {
+                for (; spr_idx < 4; spr_idx++) {
                     volatile USHORT* spr = (volatile USHORT*)(0xDFF140 + spr_idx * 8);
                     spr[0] = (USHORT)(256 << 8);
                     spr[1] = 0;
