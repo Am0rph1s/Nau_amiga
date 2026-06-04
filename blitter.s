@@ -659,3 +659,129 @@ DrawBob16Asm:
 .db16_exit:
         movem.l (sp)+,d2-d7/a2-a6
         rts
+
+| ============================================================
+| int DrawBob32d2Asm(UBYTE* screen_mem, const UWORD* mask,
+|                    const UWORD* dataHi, const UWORD* dataLo,
+|                    short x, short y, UBYTE planeHi, UBYTE planeLo)
+|
+| Fast-path for word-aligned, fully visible 32x24 bobs with 2 data planes + clear plane5.
+| Returns 0 on success, 1 if needs C fallback.
+| Stack: sp+52=screen, +56=mask, +60=dataHi, +64=dataLo, +68=x, +72=y, +76=planeHi, +80=planeLo
+| ============================================================
+        .global DrawBob32d2Asm
+DrawBob32d2Asm:
+        movem.l d2-d7/a2-a6,-(sp)      | 11 regs = 44 bytes
+
+        move.l  48(sp),a2               | a2 = screen_mem
+        move.l  52(sp),a3               | a3 = mask
+        move.l  56(sp),a4               | a4 = dataHi
+        move.l  60(sp),a5               | a5 = dataLo
+        move.w  66(sp),d7               | d7 = x (low 16 of int)
+        move.w  70(sp),d6               | d6 = y
+        move.w  74(sp),d5               | d5 = planeHi
+        move.w  78(sp),d4               | d4 = planeLo
+
+        | Fast-path checks
+        btst    #0,d7
+        bne     .db322_fail
+        cmpi.w  #-32,d7
+        ble     .db322_fail
+        cmpi.w  #288,d7
+        bgt     .db322_fail
+        tst.w   d6
+        bmi     .db322_fail
+
+        | Setup plane pointers (plane index * 10240)
+        move.w  d5,d0
+        mulu    #10240,d0
+        move.l  a2,a0
+        adda.l  d0,a0                   | a0 = screen + planeHi*10240
+        move.w  d4,d0
+        mulu    #10240,d0
+        move.l  a2,a1
+        adda.l  d0,a1                   | a1 = screen + planeLo*10240
+        | plane5 (always at 5*10240)
+        lea     30720(a2),a6
+        lea     20480(a6),a6            | a6 = plane5
+
+        | wx = x >> 4, byte offset = wx * 2
+        move.w  d7,d2
+        lsr.w   #4,d2                   | d2 = wx
+        add.w   d2,d2                   | d2 = wx * 2 (byte offset)
+
+        | Row offset = y * 40 + wx * 2
+        move.w  d6,d3
+        lsl.w   #5,d3                   | y * 32
+        move.w  d6,d0
+        lsl.w   #3,d0                   | y * 8
+        add.w   d0,d3                   | y * 40
+        add.w   d2,d3                   | + wx*2
+
+        | Check bottom: y + 24 > 256?
+        addi.w  #24,d6
+        cmpi.w  #256,d6
+        bgt     .db322_fail
+
+        | Row increment = 40 bytes
+        moveq   #40,d2
+        | 24 rows (use dbra)
+        moveq   #23,d7
+
+.db322_rloop:
+        | Load mask words (2 per row for 32px)
+        move.w  (a3)+,d0                | mask word 0
+        move.w  (a3)+,d1                | mask word 1
+
+        | Apply to planeHi (mask + dataHi)
+        move.w  (a4)+,d5                | dataHi word 0
+        move.w  (a4)+,d6                | dataHi word 1
+        | Word 0: cookie-cut
+        move.w  d0,d4
+        not.w   d4
+        and.w   d4,(a0,d3.w)            | clear mask area
+        and.w   d0,d5                   | data & mask
+        or.w    d5,(a0,d3.w)            | set data bits
+        | Word 1 (offset +2 bytes)
+        move.w  d1,d4
+        not.w   d4
+        and.w   d4,2(a0,d3.w)
+        and.w   d1,d6
+        or.w    d6,2(a0,d3.w)
+
+        | Apply to planeLo (mask + dataLo)
+        move.w  (a5)+,d5                | dataLo word 0
+        move.w  (a5)+,d6                | dataLo word 1
+        | Word 0
+        move.w  d0,d4
+        not.w   d4
+        and.w   d4,(a1,d3.w)
+        and.w   d0,d5
+        or.w    d5,(a1,d3.w)
+        | Word 1
+        move.w  d1,d4
+        not.w   d4
+        and.w   d4,2(a1,d3.w)
+        and.w   d1,d6
+        or.w    d6,2(a1,d3.w)
+
+        | Clear plane5 in mask area
+        move.w  d0,d4
+        not.w   d4
+        and.w   d4,(a6,d3.w)
+        move.w  d1,d4
+        not.w   d4
+        and.w   d4,2(a6,d3.w)
+
+        | Next row
+        add.w   d2,d3                   | row offset += 40
+        dbra    d7,.db322_rloop
+
+        moveq   #0,d0                   | success
+        bra.s   .db322_exit
+
+.db322_fail:
+        moveq   #1,d0
+.db322_exit:
+        movem.l (sp)+,d2-d7/a2-a6
+        rts

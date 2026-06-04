@@ -377,6 +377,8 @@ static void DrawBob32(UBYTE* screen_mem,
 static void DrawBob32_2bpl(UBYTE* screen_mem,
                            const UWORD* mask, const UWORD* dataHi, const UWORD* dataLo,
                            short x, short y, UBYTE planeHi, UBYTE planeLo) {
+    if (!DrawBob32d2Asm(screen_mem, mask, dataHi, dataLo, x, y, planeHi, planeLo))
+        return;  // fast path succeeded
     if (x <= -32 || x >= SCREEN_W || y <= -24 || y >= SCREEN_H) return;
     UWORD shift = (UWORD)(x & 15);
     UWORD rows  = 24;
