@@ -1061,9 +1061,9 @@ int main() {
         UBYTE joy = ReadJoy();
 
         // --- Advance background scroll (wraps for infinite loop) ---
-        g_BGScrollY--;
+        g_BGScrollY -= 2;
         if (g_BGScrollY < 0) g_BGScrollY = BG_MAP_ROWS * BG_TILE_H - 1;
-        g_BorderScrollY -= 2;
+        g_BorderScrollY -= 3;
         if (g_BorderScrollY < 0) g_BorderScrollY += BORDER_H;
         for (int i = 0; i < N_STARS_1; i++) {
             if (++g_Stars1[i].y >= GAME_H) {
