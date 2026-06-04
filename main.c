@@ -611,7 +611,7 @@ static UWORD g_Palette[32] = {
     0x0444,              //  9  PF2 dark grey
     0x0888,              // 10  PF2 mid grey
     0x0CCC,              // 11  PF2 light grey
-    0x0FF0,              // 12  PF2 yellow (shots)
+    0x0CCC,              // 12  PF2 light grey (was yellow)
     0x0212,              // 13  PF2 border dark
     0x0756,              // 14  PF2 border mid
     0x0434,              // 15  PF2 border light
