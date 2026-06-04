@@ -792,6 +792,7 @@ static __attribute__((interrupt)) void VBlankHandler() {
         custom->cop1lc = (ULONG)g_PendingCop;
         g_PendingCop = 0;
     }
+    custom->copjmp1 = 0;  // strobe: force copper to reload COP1LC immediately
     g_FrameCounter++;
 }
 
@@ -809,6 +810,9 @@ static void BuildCopperListEx(USHORT* cop, const UBYTE** pf1_planes, const UBYTE
     USHORT xstop = x + width;
     USHORT ystop = y + height;
     USHORT fw    = (x >> 1) - RES;
+
+    // Wait for VBlank (line 0) so all registers are set before visible area (line 44)
+    *cop++ = 0x0001; *cop++ = 0xFFFE;
 
     cop = copSetReg(cop, 0x092, fw);                              // DDFSTRT
     cop = copSetReg(cop, 0x094, fw + (((width>>4)-1)<<3));       // DDFSTOP
