@@ -602,10 +602,10 @@ static UWORD g_Palette[32] = {
     0x0000, 0x0000, 0x0000, 0x0000,
     0x0000, 0x0000, 0x0000, 0x0000,
     0x0000,
-    // Slots 29-31: hardware sprite 4 (player shots: outline=29, fill=30)
-    0x0000,              // 29  HW sprite black (outline)
-    0x0FFF,              // 30  HW sprite white (fill)
-    0x0000,              // 31  HW sprite unused
+    // Slots 29-31: hardware sprite 4 (player shots: outline=29, fill=31)
+    0x0000,              // 29  HW sprite black (outline, DATA=1 DATB=0)
+    0x0000,              // 30  HW sprite unused
+    0x0FFF,              // 31  HW sprite white (fill, DATA=1 DATB=1)
 };
 
 // ============================================================================
@@ -950,7 +950,7 @@ static void RenderFrame(UBYTE* screen_mem) {
         }
         for (int i = 0; i < MAX_SHOTS; i++) {
             if (!g_Shots[i].active) continue;
-            DrawBob16(screen_mem, g_ShotMask, g_ShotData, g_Shots[i].x, g_Shots[i].y, 0x04, 8);
+            // Shots now drawn by hardware sprites (DMA 4-7)
         }
         for (int i = 0; i < MAX_ENEMY_SHOTS; i++) {
             if (!g_EnemyShots[i].active) continue;
@@ -1011,7 +1011,7 @@ int main() {
     // --- Hardware sprite data for player shots (16x8, 2-color: black outline + white fill) ---
     // Each entry: 8 pairs of (DATA, DATB) + terminator (0,0)
     #define HWSPR_H 8
-    static const UWORD g_HwSprShot[4][(HWSPR_H+1)*2] = {{
+    static UWORD g_HwSprShot[4][(HWSPR_H+1)*2] = {{
         // Sprite 0 (player shot 0)
         0x0180,0x0000, 0x03C0,0x0180, 0x07E0,0x03C0, 0x0FF0,0x07E0,
         0x0FF0,0x07E0, 0x07E0,0x03C0, 0x03C0,0x0180, 0x0180,0x0000,
@@ -1050,7 +1050,21 @@ int main() {
     custom->cop1lc = (ULONG)cop_show;
     custom->dmacon = DMAF_BLITTER;
     custom->copjmp1 = 0x7fff;
-    custom->dmacon = DMAF_SETCLR | DMAF_MASTER | DMAF_RASTER | DMAF_COPPER | DMAF_BLITTER;
+    custom->dmacon = DMAF_SETCLR | DMAF_MASTER | DMAF_RASTER | DMAF_COPPER | DMAF_BLITTER | DMAF_SPRITE;
+
+    // --- Init hardware sprite pointers (DMA 4-7, player shots) ---
+    for (int s = 0; s < 4; s++) {
+        volatile USHORT* ptr = (volatile USHORT*)(0xDFF130 + s*4);
+        ULONG addr = (ULONG)g_HwSprShot[s];
+        ptr[0] = (USHORT)(addr >> 16);
+        ptr[1] = (USHORT)addr;
+    }
+    // Hide sprites initially (y > 312 = off-screen)
+    for (int s = 0; s < 4; s++) {
+        volatile USHORT* pos = (volatile USHORT*)(0xDFF160 + s*8);
+        pos[0] = (USHORT)(256 << 8);
+        pos[1] = 0;
+    }
 
     // Install VBlank interrupt
     SetInterruptHandler((APTR)VBlankHandler);
@@ -1204,6 +1218,19 @@ int main() {
                 if (!g_Shots[i].active) continue;
                 g_Shots[i].y -= SHOT_SPEED;
                 if (g_Shots[i].y < GAME_Y0) g_Shots[i].active = 0;
+            }
+
+            // --- Update hardware sprite positions (DMA 4-7) ---
+            for (int i = 0; i < MAX_SHOTS; i++) {
+                volatile USHORT* spr = (volatile USHORT*)(0xDFF160 + i * 8);
+                if (g_Shots[i].active) {
+                    short sx = g_Shots[i].x, sy = g_Shots[i].y;
+                    spr[0] = (USHORT)((sy & 0xFF) << 8) | ((sx >> 1) & 0xFF);
+                    spr[1] = (USHORT)(((sy >> 7) & 2) | ((sx & 1) << 0));
+                } else {
+                    spr[0] = (USHORT)(256 << 8);
+                    spr[1] = 0;
+                }
             }
 
             // --- Update enemies ---
