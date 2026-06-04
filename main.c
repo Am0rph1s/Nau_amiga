@@ -220,25 +220,39 @@ static void DrawBorder(UBYTE* screen_mem, short scroll_y) {
     scroll_y = scroll_y % border_h;
     if (scroll_y < 0) scroll_y += border_h;
 
-    static const int pf2_offsets[3] = { 1 * PLANE_BYTES, 3 * PLANE_BYTES, 5 * PLANE_BYTES };
-    UBYTE* row_ptr = screen_mem;
+    UBYTE* p1_base = screen_mem + 1 * PLANE_BYTES;
+    UBYTE* p3_base = screen_mem + 3 * PLANE_BYTES;
+    UBYTE* p5_base = screen_mem + 5 * PLANE_BYTES;
 
     for (int row = 0; row < SCREEN_H; row++) {
         int src_row = (scroll_y + row) % border_h;
         int src_off = src_row * BORDER_ROW_BYTES;
 
-        for (int p = 0; p < 3; p++) {
-            UBYTE* dst = row_ptr + pf2_offsets[p];
-            const UBYTE* src = border_data + p * BORDER_PLANE_SIZE + src_off;
-            const UBYTE* msrc = border_mirror_data + p * BORDER_PLANE_SIZE + src_off;
+        const UWORD* s01 = (const UWORD*)(border_data + 0 * BORDER_PLANE_SIZE + src_off);
+        const UWORD* s11 = (const UWORD*)(border_data + 1 * BORDER_PLANE_SIZE + src_off);
+        const UWORD* s21 = (const UWORD*)(border_data + 2 * BORDER_PLANE_SIZE + src_off);
+        const UWORD* m01 = (const UWORD*)(border_mirror_data + 0 * BORDER_PLANE_SIZE + src_off);
+        const UWORD* m11 = (const UWORD*)(border_mirror_data + 1 * BORDER_PLANE_SIZE + src_off);
+        const UWORD* m21 = (const UWORD*)(border_mirror_data + 2 * BORDER_PLANE_SIZE + src_off);
 
-            dst[0] = src[0]; dst[1] = src[1]; dst[2] = src[2]; dst[3] = src[3];
-            dst[4] = src[4]; dst[5] = src[5]; dst[6] = src[6]; dst[7] = src[7];
+        // Plane 1 (BPL2): 4 words left + 4 words right
+        UWORD* d1 = (UWORD*)p1_base;
+        d1[0] = s01[0]; d1[1] = s01[1]; d1[2] = s01[2]; d1[3] = s01[3];
+        d1[16] = m01[0]; d1[17] = m01[1]; d1[18] = m01[2]; d1[19] = m01[3];
 
-            dst[32] = msrc[0]; dst[33] = msrc[1]; dst[34] = msrc[2]; dst[35] = msrc[3];
-            dst[36] = msrc[4]; dst[37] = msrc[5]; dst[38] = msrc[6]; dst[39] = msrc[7];
-        }
-        row_ptr += ROW_BYTES;
+        // Plane 3 (BPL4)
+        UWORD* d3 = (UWORD*)p3_base;
+        d3[0] = s11[0]; d3[1] = s11[1]; d3[2] = s11[2]; d3[3] = s11[3];
+        d3[16] = m11[0]; d3[17] = m11[1]; d3[18] = m11[2]; d3[19] = m11[3];
+
+        // Plane 5 (BPL6)
+        UWORD* d5 = (UWORD*)p5_base;
+        d5[0] = s21[0]; d5[1] = s21[1]; d5[2] = s21[2]; d5[3] = s21[3];
+        d5[16] = m21[0]; d5[17] = m21[1]; d5[18] = m21[2]; d5[19] = m21[3];
+
+        p1_base += ROW_BYTES;
+        p3_base += ROW_BYTES;
+        p5_base += ROW_BYTES;
     }
 }
 
