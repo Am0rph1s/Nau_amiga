@@ -471,10 +471,10 @@ DrawBorderAsm:
         move.l  56(sp),a3               | a3 = screen_mem
         move.l  60(sp),a4               | a4 = border_data
         move.l  64(sp),a5               | a5 = border_mirror_data
-        move.w  68(sp),d7               | d7 = scroll_y
+        move.l  68(sp),d7               | d7 = scroll_y
 
         | Ensure scroll in range (0..1023)
-        andi.w  #1023,d7
+        andi.l  #1023,d7
 
         | Plane base pointers
         lea     10240(a3),a1            | a1 = plane 1 (BPL2)
@@ -486,9 +486,8 @@ DrawBorderAsm:
         move.w  #255,d6
 .db_row:
         | d7 = scroll row, compute source offset = d7 * 8
-        move.w  d7,d4
-        lsl.w   #3,d4                   | d4 = d7 * 8
-        andi.l  #0xFFFF,d4
+        move.l  d7,d4
+        lsl.l   #3,d4                   | d4 = d7 * 8
 
         | --- Plane 1 (BPL2): left border from border_data+0*8192 ---
         move.l  a4,a0
@@ -537,8 +536,8 @@ DrawBorderAsm:
         lea     40(a6),a6
 
         | Wrap scroll
-        addq.w  #1,d7
-        cmpi.w  #BORDER_H,d7
+        addq.l  #1,d7
+        cmpi.l  #BORDER_H,d7
         bcs.s   .db_nw
         moveq   #0,d7
 .db_nw:

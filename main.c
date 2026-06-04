@@ -216,7 +216,7 @@ static void ClearGameArea(UBYTE* screen_mem) {
 
 // Draw foreground border (64px, 3-bitplane) on PF2 — ASM optimized with movem
 static void DrawBorder(UBYTE* screen_mem, short scroll_y) {
-    DrawBorderAsm(screen_mem, border_data, border_mirror_data, scroll_y);
+    DrawBorderAsm(screen_mem, border_data, border_mirror_data, (int)scroll_y);
 }
 
 // Check ship collision with border (any non-zero pixel = solid)
