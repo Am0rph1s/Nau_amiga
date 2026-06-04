@@ -928,7 +928,7 @@ static void BuildCopperListEx(USHORT* cop, const UBYTE** pf1_planes, const UBYTE
 
 static void RenderFrame(UBYTE* screen_mem) {
     ClearGameArea(screen_mem);
-    DrawBorder(screen_mem, g_BorderScrollY);
+    // DrawBorder(screen_mem, g_BorderScrollY);
     if (g_StarsEnabled) {
         for (int i = 0; i < N_STARS_1; i++) DrawPixel(screen_mem, g_Stars1[i].x, g_Stars1[i].y, 1);
         for (int i = 0; i < N_STARS_2; i++) DrawPixel(screen_mem, g_Stars2[i].x, g_Stars2[i].y, 2);
