@@ -597,11 +597,15 @@ static UWORD g_Palette[32] = {
     0x0212,              // 13  PF2 border dark
     0x0756,              // 14  PF2 border mid
     0x0434,              // 15  PF2 border light
-    // Slots 16-31: unused
+    // Slots 16-28: unused
     0x0000, 0x0000, 0x0000, 0x0000,
     0x0000, 0x0000, 0x0000, 0x0000,
     0x0000, 0x0000, 0x0000, 0x0000,
-    0x0000, 0x0000, 0x0000, 0x0000,
+    0x0000,
+    // Slots 29-31: hardware sprite 4 (player shots: outline=29, fill=30)
+    0x0000,              // 29  HW sprite black (outline)
+    0x0FFF,              // 30  HW sprite white (fill)
+    0x0000,              // 31  HW sprite unused
 };
 
 // ============================================================================
@@ -1003,6 +1007,29 @@ int main() {
         }
     }
     // (walls removed — 320px tilemap covers full screen)
+
+    // --- Hardware sprite data for player shots (16x8, 2-color: black outline + white fill) ---
+    // Each entry: 8 pairs of (DATA, DATB) + terminator (0,0)
+    #define HWSPR_H 8
+    static const UWORD g_HwSprShot[4][(HWSPR_H+1)*2] = {{
+        // Sprite 0 (player shot 0)
+        0x0180,0x0000, 0x03C0,0x0180, 0x07E0,0x03C0, 0x0FF0,0x07E0,
+        0x0FF0,0x07E0, 0x07E0,0x03C0, 0x03C0,0x0180, 0x0180,0x0000,
+        0x0000,0x0000
+    },{
+        // Sprites 1-3: identical copies
+        0x0180,0x0000, 0x03C0,0x0180, 0x07E0,0x03C0, 0x0FF0,0x07E0,
+        0x0FF0,0x07E0, 0x07E0,0x03C0, 0x03C0,0x0180, 0x0180,0x0000,
+        0x0000,0x0000
+    },{
+        0x0180,0x0000, 0x03C0,0x0180, 0x07E0,0x03C0, 0x0FF0,0x07E0,
+        0x0FF0,0x07E0, 0x07E0,0x03C0, 0x03C0,0x0180, 0x0180,0x0000,
+        0x0000,0x0000
+    },{
+        0x0180,0x0000, 0x03C0,0x0180, 0x07E0,0x03C0, 0x0FF0,0x07E0,
+        0x0FF0,0x07E0, 0x07E0,0x03C0, 0x03C0,0x0180, 0x0180,0x0000,
+        0x0000,0x0000
+    }};
 
     // --- Allocate double-buffered copper lists ---
     USHORT* copper1 = (USHORT*)AllocMem(1024, MEMF_CHIP | MEMF_CLEAR);
