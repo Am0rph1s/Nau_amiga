@@ -176,6 +176,7 @@ typedef struct {
     short  zig_timer;
     short  boss_hp_max;
     short  boss_vosc;
+    short  variant;     // 0=normal, 1=inverted
 } TEnemy;
 
 typedef struct {

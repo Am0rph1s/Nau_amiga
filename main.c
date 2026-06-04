@@ -785,6 +785,7 @@ static void SpawnEnemy(short type) {
     e->fire_cd = 0;
     e->zig_timer = 0;
     e->pattern = PATT_STRAIGHT;
+    e->variant = (short)((g_FrameCounter + g_WaveSpawned) & 1);  // alternate white/black
     switch (type) {
         case ENEMY_TYPE_BASIC:  e->health = 1; e->vy = ENEMY_SPEED_BASIC;  break;
         case ENEMY_TYPE_FAST:   e->health = 1; e->vy = ENEMY_SPEED_FAST;   break;
@@ -930,11 +931,13 @@ static void RenderFrame(UBYTE* screen_mem) {
             if (!e->active) continue;
             if (e->type == ENEMY_TYPE_BASIC) {
                 DrawBob32_2bpl(screen_mem, g_EnemyBasic24Mask,
-                               g_EnemyBasic24Hi, g_EnemyBasic24Lo,
+                               e->variant ? g_EnemyBasic24Lo : g_EnemyBasic24Hi,
+                               e->variant ? g_EnemyBasic24Hi : g_EnemyBasic24Lo,
                                e->x, e->y, 1, 3);
             } else if (e->type == ENEMY_TYPE_FAST) {
                 DrawBob16_2bpl(screen_mem, g_EnemyFast16Mask,
-                               g_EnemyFast16Hi, g_EnemyFast16Lo,
+                               e->variant ? g_EnemyFast16Lo : g_EnemyFast16Hi,
+                               e->variant ? g_EnemyFast16Hi : g_EnemyFast16Lo,
                                e->x, e->y, 1, 3, 16);
             } else {
                 DrawBob16(screen_mem, g_EnemyMasks[e->type], g_EnemyDatas[e->type],
