@@ -885,16 +885,16 @@ static void BuildCopperListEx(USHORT* cop, const UBYTE** pf1_planes, const UBYTE
     USHORT ystop = y + height;
     USHORT fw    = (x >> 1) - RES;
 
-    cop = copSetReg(cop, offsetof(struct Custom, ddfstrt),  fw);
-    cop = copSetReg(cop, offsetof(struct Custom, ddfstop),  fw + (((width>>4)-1)<<3));
-    cop = copSetReg(cop, offsetof(struct Custom, diwstrt),  x + (y<<8));
-    cop = copSetReg(cop, offsetof(struct Custom, diwstop),  (xstop-256) + ((ystop-256)<<8));
+    cop = copSetReg(cop, 0x092, fw);                              // DDFSTRT
+    cop = copSetReg(cop, 0x094, fw + (((width>>4)-1)<<3));       // DDFSTOP
+    cop = copSetReg(cop, 0x08E, x + (y<<8));                      // DIWSTRT
+    cop = copSetReg(cop, 0x090, (xstop-256) + ((ystop-256)<<8)); // DIWSTOP
 
-    cop = copSetReg(cop, offsetof(struct Custom, bplcon0), (1<<9) | (6<<12) | (1<<10));
-    cop = copSetReg(cop, offsetof(struct Custom, bplcon1), 0);
-    cop = copSetReg(cop, offsetof(struct Custom, bplcon2), (1<<6) | (2<<2) | (1<<1));
-    cop = copSetReg(cop, offsetof(struct Custom, bpl1mod), 0);
-    cop = copSetReg(cop, offsetof(struct Custom, bpl2mod), 0);
+    cop = copSetReg(cop, 0x100, (6<<12) | (1<<10));               // BPLCON0
+    cop = copSetReg(cop, 0x102, 0);                                // BPLCON1
+    cop = copSetReg(cop, 0x104, (1<<6) | (2<<2) | (1<<1));        // BPLCON2
+    cop = copSetReg(cop, 0x108, 0);                                // BPL1MOD
+    cop = copSetReg(cop, 0x10A, 0);                                // BPL2MOD
 
     // PF1: BPL1, BPL3, BPL5 — from bg_buf with vertical scroll
     // PF2: BPL2, BPL4, BPL6 — from draw_buf (no scroll)
