@@ -1225,22 +1225,11 @@ int main() {
                 if (g_Shots[i].y < GAME_Y0) g_Shots[i].active = 0;
             }
 
-            // --- Update hardware sprite positions (DMA 0-3) for enemy shots ---
+            // --- HW sprite test: show sprite 0 always visible ---
             {
-                int spr_idx = 0;
-                for (int i = 0; i < MAX_ENEMY_SHOTS && spr_idx < 4; i++) {
-                    if (!g_EnemyShots[i].active) continue;
-                    volatile USHORT* spr = (volatile USHORT*)(0xDFF140 + spr_idx * 8);
-                    short sx = g_EnemyShots[i].x, sy = g_EnemyShots[i].y;
-                    spr[0] = (USHORT)((sy & 0xFF) << 8) | ((sx >> 1) & 0xFF);
-                    spr[1] = (USHORT)(((sy >> 7) & 2) | ((sx & 1) << 0));
-                    spr_idx++;
-                }
-                for (; spr_idx < 4; spr_idx++) {
-                    volatile USHORT* spr = (volatile USHORT*)(0xDFF140 + spr_idx * 8);
-                    spr[0] = (USHORT)(256 << 8);
-                    spr[1] = 0;
-                }
+                volatile USHORT* spr = (volatile USHORT*)0xDFF140;
+                spr[0] = (USHORT)((100 << 8) | (160 >> 1));
+                spr[1] = (USHORT)((160 & 1) << 0);
             }
 
             // --- Update enemies ---
