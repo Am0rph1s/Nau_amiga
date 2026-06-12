@@ -2099,15 +2099,12 @@ int main() {
                     g_Palette[12] = 0x0CF;  // BPL6: destination = light blue
                 }
             } else {
-                // Normal scrolling bubble: single color, pulsing.
-                short pulse = (short)((g_FrameCounter >> 2) & 0x1F);
+                // Normal scrolling bubble: single color (no pulse).
                 g_Palette[10] = 0x0111;  // BPL4: keep player-shot near-black
                 if (g_ShipPolarity == 0) {
-                    // White polarity: light blue / cyan
-                    g_Palette[12] = (pulse < 16) ? (USHORT)0x0CF : (USHORT)0x0FF;
+                    g_Palette[12] = 0x0CF;  // light blue (white polarity)
                 } else {
-                    // Black polarity: dark red / red
-                    g_Palette[12] = (pulse < 16) ? (USHORT)0xA00 : (USHORT)0xF00;
+                    g_Palette[12] = 0xA00;  // dark red (black polarity)
                 }
             }
 
