@@ -17,3 +17,10 @@ extern int DrawBob32d2Asm(UBYTE* screen_mem, const UWORD* mask,
 extern int DrawBob16d2Asm(UBYTE* screen_mem, const UWORD* mask,
                            const UWORD* dataHi, const UWORD* dataLo,
                            short x, short y, UBYTE planeHi, UBYTE planeLo, UWORD rows);
+
+// Entity update routines (68k ASM, see entities.s)
+extern void AsmUpdatePlayerShots(void);
+extern void AsmUpdateEnemyShots(void);
+extern void AsmUpdateEnemies(void);
+extern void AsmUpdateExplosions(void);
+extern void AsmEnemyFire(void);

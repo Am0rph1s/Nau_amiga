@@ -56,27 +56,19 @@
 #define SHOT_W          4
 #define SHOT_H          8
 #define FIRE_COOLDOWN   3
+#define POLARITY_HOLD_FRAMES  8  // frames of holding fire to switch to black polarity
 
 // --- Enemy types ------------------------------------------------------------
 #define ENEMY_TYPE_BASIC    0
 #define ENEMY_TYPE_FAST     1
-#define ENEMY_TYPE_HEAVY    2
-#define ENEMY_TYPE_DIVER    3
-#define ENEMY_TYPE_BOMBER   4
 #define ENEMY_TYPE_BOSS     5
 
 #define ENEMY_SPEED_BASIC   3
 #define ENEMY_SPEED_FAST    4
-#define ENEMY_SPEED_HEAVY   2
-#define ENEMY_SPEED_DIVER   5
-#define ENEMY_SPEED_BOMBER  3
 #define ENEMY_SPEED_BOSS    2
 
 #define ENEMY_SCORE_BASIC   10
 #define ENEMY_SCORE_FAST    20
-#define ENEMY_SCORE_HEAVY   50
-#define ENEMY_SCORE_DIVER   40
-#define ENEMY_SCORE_BOMBER  80
 #define ENEMY_SCORE_BOSS    1500
 
 #define ENEMY_W             24
@@ -92,7 +84,7 @@
 
 // --- Enemy shots ------------------------------------------------------------
 #define MAX_ENEMY_SHOTS     12
-#define ENEMYSHOT_SPEED_Y   3
+#define ENEMYSHOT_SPEED_Y   5
 #define ENEMYSHOT_COOLDOWN  18
 #define ENEMYSHOT_STAGGER   5
 #define ENEMYSHOT_W         4
@@ -114,9 +106,6 @@
 
 #define LMASK_BASIC     (1<<0)
 #define LMASK_FAST      (1<<1)
-#define LMASK_HEAVY     (1<<2)
-#define LMASK_DIVER     (1<<3)
-#define LMASK_BOMBER    (1<<4)
 #define LCFG_F_BOSS1    1
 #define LCFG_F_BOSS2    2
 
@@ -163,6 +152,7 @@ typedef struct {
 typedef struct {
     short  x, y;
     short  active;
+    short  variant;     // 0=white (default), 1=black (charged)
 } TShot;
 
 typedef struct {
@@ -183,6 +173,7 @@ typedef struct {
     short  x, y;
     short  active;
     short  vx, vy;
+    short  variant;     // 0=white (safe), 1=black (damages)
 } TEnemyShot;
 
 typedef struct {

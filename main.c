@@ -479,9 +479,13 @@ static void DrawPixel(UBYTE* screen_mem, short x, short y, UBYTE colorIdx) {
     if (colorIdx & 4) screen_mem[5 * PLANE_BYTES + off] |= bit;
 }
 
-// Draw white ship (32x24) - dual-playfield: write to planes 1,3 only
-// Merge original 4 bitplanes: PF2 bit0 (plane1) = bpl0|bpl1, PF2 bit1 (plane3) = bpl2|bpl3
-static void DrawShipAnim(UBYTE* screen_mem, short x, short y, UBYTE frame) {
+// Draw ship (32x24) - dual-playfield: write to planes 1,3 only
+// Each polarity has its own 4-bitplane data; we pick the right one based
+// on colorMode and render with the standard 2-BPL merge (no swap):
+//   lo -> BPL2 (PF2 bit 0)
+//   hi -> BPL4 (PF2 bit 1)
+//   lo AND hi -> slot 11 (PF2 bit 0+1, light grey interior)
+static void DrawShipAnim(UBYTE* screen_mem, short x, short y, UBYTE frame, UBYTE colorMode) {
     (void)frame;
     if (x <= -32 || x >= SCREEN_W || y <= -24 || y >= SCREEN_H) return;
     UWORD shift = (UWORD)(x & 15);
@@ -491,42 +495,45 @@ static void DrawShipAnim(UBYTE* screen_mem, short x, short y, UBYTE frame) {
     if (y + (short)rows > SCREEN_H) rows = (UWORD)(SCREEN_H - y);
     if (rows == 0) return;
     UWORD wx = (UWORD)(x < 0 ? 0 : x) >> 4;
+    UWORD* pl1 = (UWORD*)(screen_mem + 1 * PLANE_BYTES);
+    UWORD* pl3 = (UWORD*)(screen_mem + 3 * PLANE_BYTES);
+    UWORD* pl5 = (UWORD*)(screen_mem + 5 * PLANE_BYTES);
+    // Pick the polarity-specific data tables
+    const UWORD* mask    = (colorMode == 0) ? SHIP_W_A_MASK    : SHIP_W_B_MASK;
+    const UWORD* const* planes = (colorMode == 0) ? SHIP_W_A_PLANES : SHIP_W_B_PLANES;
+    const UWORD* p0 = planes[0];
+    const UWORD* p1 = planes[1];
+    const UWORD* p2 = planes[2];
+    const UWORD* p3 = planes[3];
     for (UWORD row = 0; row < rows; row++) {
         UWORD ri   = row + skip;
-        UWORD m0   = SHIP_W_MASK[ri*2],   m1 = SHIP_W_MASK[ri*2+1];
+        UWORD m0   = mask[ri*2],   m1 = mask[ri*2+1];
         UWORD mv0  = m0 >> shift;
         UWORD mv1  = shift ? (UWORD)((m0 << (16-shift)) | (m1 >> shift)) : m1;
         UWORD mv2  = shift ? (UWORD)(m1 << (16-shift)) : 0;
         UWORD ry   = (UWORD)y + row;
         UWORD base = ry * (ROW_BYTES / 2) + wx;
-        // Merge planes 0|1 -> PF2 bit0 (written to plane 1)
-        UWORD lo0 = (UWORD)(SHIP_W_PLANES[0][ri*2] | SHIP_W_PLANES[1][ri*2]);
-        UWORD lo1 = (UWORD)(SHIP_W_PLANES[0][ri*2+1] | SHIP_W_PLANES[1][ri*2+1]);
-        // Merge planes 2|3 -> PF2 bit1 (written to plane 3)
-        UWORD hi0 = (UWORD)(SHIP_W_PLANES[2][ri*2] | SHIP_W_PLANES[3][ri*2]);
-        UWORD hi1 = (UWORD)(SHIP_W_PLANES[2][ri*2+1] | SHIP_W_PLANES[3][ri*2+1]);
-        // Shift lo
+        UWORD lo0 = (UWORD)(p0[ri*2] | p1[ri*2]);
+        UWORD lo1 = (UWORD)(p0[ri*2+1] | p1[ri*2+1]);
+        UWORD hi0 = (UWORD)(p2[ri*2] | p3[ri*2]);
+        UWORD hi1 = (UWORD)(p2[ri*2+1] | p3[ri*2+1]);
         UWORD lv0 = lo0 >> shift;
         UWORD lv1 = shift ? (UWORD)((lo0 << (16-shift)) | (lo1 >> shift)) : lo1;
         UWORD lv2 = shift ? (UWORD)(lo1 << (16-shift)) : 0;
-        // Shift hi
         UWORD hv0 = hi0 >> shift;
         UWORD hv1 = shift ? (UWORD)((hi0 << (16-shift)) | (hi1 >> shift)) : hi1;
         UWORD hv2 = shift ? (UWORD)(hi1 << (16-shift)) : 0;
-        // Write plane 1 (PF2 bit0)
-        UWORD* pl1 = (UWORD*)(screen_mem + 1 * PLANE_BYTES);
+        // Always: lo -> BPL2, hi -> BPL4 (no swap). Each polarity has its
+        // own design encoded in the bitplanes, so the same render path works
+        // for both. pl5 cleared in the ship area to avoid leftover bits.
         pl1[base]   = (UWORD)((pl1[base]   & ~mv0) | (lv0 & mv0));
         pl1[base+1] = (UWORD)((pl1[base+1] & ~mv1) | (lv1 & mv1));
         if (wx + 2 < ROW_BYTES / 2)
             pl1[base+2] = (UWORD)((pl1[base+2] & ~mv2) | (lv2 & mv2));
-        // Write plane 3 (PF2 bit1)
-        UWORD* pl3 = (UWORD*)(screen_mem + 3 * PLANE_BYTES);
         pl3[base]   = (UWORD)((pl3[base]   & ~mv0) | (hv0 & mv0));
         pl3[base+1] = (UWORD)((pl3[base+1] & ~mv1) | (hv1 & mv1));
         if (wx + 2 < ROW_BYTES / 2)
             pl3[base+2] = (UWORD)((pl3[base+2] & ~mv2) | (hv2 & mv2));
-        // Clear plane 5 (PF2 bit2) in ship mask area
-        UWORD* pl5 = (UWORD*)(screen_mem + 5 * PLANE_BYTES);
         pl5[base]   &= ~mv0;
         pl5[base+1] &= ~mv1;
         if (wx + 2 < ROW_BYTES / 2)
@@ -534,7 +541,729 @@ static void DrawShipAnim(UBYTE* screen_mem, short x, short y, UBYTE frame) {
     }
 }
 
-static void RenderFrame(UBYTE* screen_mem); // defined after globals
+// Force field: circular ring (1 BPL thick) drawn into BPL6 of PF2.
+// All ring masks are 48x48 with the ring centered at (24,24). When drawn at
+// (g_ShipX-8, g_ShipY-12) the ring's center coincides with the ship's center.
+// Visible color is g_Palette[12] (PF2 color 4 = BPL6=1).
+//
+// g_FFBubScroll0..3: banded-dither disc (r=22) that scrolls vertically.
+// Implemented as 4 static frames, each one shifted by 1 row. Cycling them at
+// 6 fps gives the "energy lines flowing across the sphere" look (Sonic 1's
+// water bubble effect). The bands are 3 dense rows + 3 sparse rows = 6-row
+// cycle, so 4 frames = one full band cycle.
+// g_FFSweepSrc0..3 / g_FFSweepDst0..3: solid disc (r=22) split by a vertical
+// "wiper" at x=2,16,30,44. Used during polarity-flip transitions to draw an
+// OPAQUE dome that hides the ship. BPL4 gets the source mask (old polarity
+// color), BPL6 gets the destination mask (new polarity color). By swapping
+// the BPL assignments and reversing the frame order, the same masks are
+// reused for both white->black (sweep left->right) and black->white (sweep
+// right->left). Drawn AFTER the ship so the dome covers it.
+#define FORCEFIELD_W 48
+#define FORCEFIELD_H 48
+
+static const UWORD g_FFSweepSrc0[FORCEFIELD_H*3] = { // frame 0: wiper at x=2
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0080, 0x0000,
+    0x0000, 0x3FFE, 0x0000,
+    0x0001, 0xFFFF, 0xC000,
+    0x0007, 0xFFFF, 0xF000,
+    0x000F, 0xFFFF, 0xF800,
+    0x001F, 0xFFFF, 0xFC00,
+    0x007F, 0xFFFF, 0xFF00,
+    0x00FF, 0xFFFF, 0xFF80,
+    0x00FF, 0xFFFF, 0xFF80,
+    0x01FF, 0xFFFF, 0xFFC0,
+    0x03FF, 0xFFFF, 0xFFE0,
+    0x07FF, 0xFFFF, 0xFFF0,
+    0x07FF, 0xFFFF, 0xFFF0,
+    0x0FFF, 0xFFFF, 0xFFF8,
+    0x0FFF, 0xFFFF, 0xFFF8,
+    0x0FFF, 0xFFFF, 0xFFF8,
+    0x1FFF, 0xFFFF, 0xFFFC,
+    0x1FFF, 0xFFFF, 0xFFFC,
+    0x1FFF, 0xFFFF, 0xFFFC,
+    0x1FFF, 0xFFFF, 0xFFFC,
+    0x1FFF, 0xFFFF, 0xFFFC,
+    0x1FFF, 0xFFFF, 0xFFFC,
+    0x3FFF, 0xFFFF, 0xFFFE,
+    0x1FFF, 0xFFFF, 0xFFFC,
+    0x1FFF, 0xFFFF, 0xFFFC,
+    0x1FFF, 0xFFFF, 0xFFFC,
+    0x1FFF, 0xFFFF, 0xFFFC,
+    0x1FFF, 0xFFFF, 0xFFFC,
+    0x1FFF, 0xFFFF, 0xFFFC,
+    0x0FFF, 0xFFFF, 0xFFF8,
+    0x0FFF, 0xFFFF, 0xFFF8,
+    0x0FFF, 0xFFFF, 0xFFF8,
+    0x07FF, 0xFFFF, 0xFFF0,
+    0x07FF, 0xFFFF, 0xFFF0,
+    0x03FF, 0xFFFF, 0xFFE0,
+    0x01FF, 0xFFFF, 0xFFC0,
+    0x00FF, 0xFFFF, 0xFF80,
+    0x00FF, 0xFFFF, 0xFF80,
+    0x007F, 0xFFFF, 0xFF00,
+    0x001F, 0xFFFF, 0xFC00,
+    0x000F, 0xFFFF, 0xF800,
+    0x0007, 0xFFFF, 0xF000,
+    0x0001, 0xFFFF, 0xC000,
+    0x0000, 0x3FFE, 0x0000,
+    0x0000, 0x0080, 0x0000,
+    0x0000, 0x0000, 0x0000,
+};
+static const UWORD g_FFSweepDst0[FORCEFIELD_H*3] = { // frame 0
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+};
+
+static const UWORD g_FFSweepSrc1[FORCEFIELD_H*3] = { // frame 1: wiper at x=16
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0080, 0x0000,
+    0x0000, 0x3FFE, 0x0000,
+    0x0000, 0xFFFF, 0xC000,
+    0x0000, 0xFFFF, 0xF000,
+    0x0000, 0xFFFF, 0xF800,
+    0x0000, 0xFFFF, 0xFC00,
+    0x0000, 0xFFFF, 0xFF00,
+    0x0000, 0xFFFF, 0xFF80,
+    0x0000, 0xFFFF, 0xFF80,
+    0x0000, 0xFFFF, 0xFFC0,
+    0x0000, 0xFFFF, 0xFFE0,
+    0x0000, 0xFFFF, 0xFFF0,
+    0x0000, 0xFFFF, 0xFFF0,
+    0x0000, 0xFFFF, 0xFFF8,
+    0x0000, 0xFFFF, 0xFFF8,
+    0x0000, 0xFFFF, 0xFFF8,
+    0x0000, 0xFFFF, 0xFFFC,
+    0x0000, 0xFFFF, 0xFFFC,
+    0x0000, 0xFFFF, 0xFFFC,
+    0x0000, 0xFFFF, 0xFFFC,
+    0x0000, 0xFFFF, 0xFFFC,
+    0x0000, 0xFFFF, 0xFFFC,
+    0x0000, 0xFFFF, 0xFFFE,
+    0x0000, 0xFFFF, 0xFFFC,
+    0x0000, 0xFFFF, 0xFFFC,
+    0x0000, 0xFFFF, 0xFFFC,
+    0x0000, 0xFFFF, 0xFFFC,
+    0x0000, 0xFFFF, 0xFFFC,
+    0x0000, 0xFFFF, 0xFFFC,
+    0x0000, 0xFFFF, 0xFFF8,
+    0x0000, 0xFFFF, 0xFFF8,
+    0x0000, 0xFFFF, 0xFFF8,
+    0x0000, 0xFFFF, 0xFFF0,
+    0x0000, 0xFFFF, 0xFFF0,
+    0x0000, 0xFFFF, 0xFFE0,
+    0x0000, 0xFFFF, 0xFFC0,
+    0x0000, 0xFFFF, 0xFF80,
+    0x0000, 0xFFFF, 0xFF80,
+    0x0000, 0xFFFF, 0xFF00,
+    0x0000, 0xFFFF, 0xFC00,
+    0x0000, 0xFFFF, 0xF800,
+    0x0000, 0xFFFF, 0xF000,
+    0x0000, 0xFFFF, 0xC000,
+    0x0000, 0x3FFE, 0x0000,
+    0x0000, 0x0080, 0x0000,
+    0x0000, 0x0000, 0x0000,
+};
+static const UWORD g_FFSweepDst1[FORCEFIELD_H*3] = { // frame 1
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0001, 0x0000, 0x0000,
+    0x0007, 0x0000, 0x0000,
+    0x000F, 0x0000, 0x0000,
+    0x001F, 0x0000, 0x0000,
+    0x007F, 0x0000, 0x0000,
+    0x00FF, 0x0000, 0x0000,
+    0x00FF, 0x0000, 0x0000,
+    0x01FF, 0x0000, 0x0000,
+    0x03FF, 0x0000, 0x0000,
+    0x07FF, 0x0000, 0x0000,
+    0x07FF, 0x0000, 0x0000,
+    0x0FFF, 0x0000, 0x0000,
+    0x0FFF, 0x0000, 0x0000,
+    0x0FFF, 0x0000, 0x0000,
+    0x1FFF, 0x0000, 0x0000,
+    0x1FFF, 0x0000, 0x0000,
+    0x1FFF, 0x0000, 0x0000,
+    0x1FFF, 0x0000, 0x0000,
+    0x1FFF, 0x0000, 0x0000,
+    0x1FFF, 0x0000, 0x0000,
+    0x3FFF, 0x0000, 0x0000,
+    0x1FFF, 0x0000, 0x0000,
+    0x1FFF, 0x0000, 0x0000,
+    0x1FFF, 0x0000, 0x0000,
+    0x1FFF, 0x0000, 0x0000,
+    0x1FFF, 0x0000, 0x0000,
+    0x1FFF, 0x0000, 0x0000,
+    0x0FFF, 0x0000, 0x0000,
+    0x0FFF, 0x0000, 0x0000,
+    0x0FFF, 0x0000, 0x0000,
+    0x07FF, 0x0000, 0x0000,
+    0x07FF, 0x0000, 0x0000,
+    0x03FF, 0x0000, 0x0000,
+    0x01FF, 0x0000, 0x0000,
+    0x00FF, 0x0000, 0x0000,
+    0x00FF, 0x0000, 0x0000,
+    0x007F, 0x0000, 0x0000,
+    0x001F, 0x0000, 0x0000,
+    0x000F, 0x0000, 0x0000,
+    0x0007, 0x0000, 0x0000,
+    0x0001, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+};
+
+static const UWORD g_FFSweepSrc2[FORCEFIELD_H*3] = { // frame 2: wiper at x=30
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0002, 0x0000,
+    0x0000, 0x0003, 0xC000,
+    0x0000, 0x0003, 0xF000,
+    0x0000, 0x0003, 0xF800,
+    0x0000, 0x0003, 0xFC00,
+    0x0000, 0x0003, 0xFF00,
+    0x0000, 0x0003, 0xFF80,
+    0x0000, 0x0003, 0xFF80,
+    0x0000, 0x0003, 0xFFC0,
+    0x0000, 0x0003, 0xFFE0,
+    0x0000, 0x0003, 0xFFF0,
+    0x0000, 0x0003, 0xFFF0,
+    0x0000, 0x0003, 0xFFF8,
+    0x0000, 0x0003, 0xFFF8,
+    0x0000, 0x0003, 0xFFF8,
+    0x0000, 0x0003, 0xFFFC,
+    0x0000, 0x0003, 0xFFFC,
+    0x0000, 0x0003, 0xFFFC,
+    0x0000, 0x0003, 0xFFFC,
+    0x0000, 0x0003, 0xFFFC,
+    0x0000, 0x0003, 0xFFFC,
+    0x0000, 0x0003, 0xFFFE,
+    0x0000, 0x0003, 0xFFFC,
+    0x0000, 0x0003, 0xFFFC,
+    0x0000, 0x0003, 0xFFFC,
+    0x0000, 0x0003, 0xFFFC,
+    0x0000, 0x0003, 0xFFFC,
+    0x0000, 0x0003, 0xFFFC,
+    0x0000, 0x0003, 0xFFF8,
+    0x0000, 0x0003, 0xFFF8,
+    0x0000, 0x0003, 0xFFF8,
+    0x0000, 0x0003, 0xFFF0,
+    0x0000, 0x0003, 0xFFF0,
+    0x0000, 0x0003, 0xFFE0,
+    0x0000, 0x0003, 0xFFC0,
+    0x0000, 0x0003, 0xFF80,
+    0x0000, 0x0003, 0xFF80,
+    0x0000, 0x0003, 0xFF00,
+    0x0000, 0x0003, 0xFC00,
+    0x0000, 0x0003, 0xF800,
+    0x0000, 0x0003, 0xF000,
+    0x0000, 0x0003, 0xC000,
+    0x0000, 0x0002, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+};
+static const UWORD g_FFSweepDst2[FORCEFIELD_H*3] = { // frame 2
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0080, 0x0000,
+    0x0000, 0x3FFC, 0x0000,
+    0x0001, 0xFFFC, 0x0000,
+    0x0007, 0xFFFC, 0x0000,
+    0x000F, 0xFFFC, 0x0000,
+    0x001F, 0xFFFC, 0x0000,
+    0x007F, 0xFFFC, 0x0000,
+    0x00FF, 0xFFFC, 0x0000,
+    0x00FF, 0xFFFC, 0x0000,
+    0x01FF, 0xFFFC, 0x0000,
+    0x03FF, 0xFFFC, 0x0000,
+    0x07FF, 0xFFFC, 0x0000,
+    0x07FF, 0xFFFC, 0x0000,
+    0x0FFF, 0xFFFC, 0x0000,
+    0x0FFF, 0xFFFC, 0x0000,
+    0x0FFF, 0xFFFC, 0x0000,
+    0x1FFF, 0xFFFC, 0x0000,
+    0x1FFF, 0xFFFC, 0x0000,
+    0x1FFF, 0xFFFC, 0x0000,
+    0x1FFF, 0xFFFC, 0x0000,
+    0x1FFF, 0xFFFC, 0x0000,
+    0x1FFF, 0xFFFC, 0x0000,
+    0x3FFF, 0xFFFC, 0x0000,
+    0x1FFF, 0xFFFC, 0x0000,
+    0x1FFF, 0xFFFC, 0x0000,
+    0x1FFF, 0xFFFC, 0x0000,
+    0x1FFF, 0xFFFC, 0x0000,
+    0x1FFF, 0xFFFC, 0x0000,
+    0x1FFF, 0xFFFC, 0x0000,
+    0x0FFF, 0xFFFC, 0x0000,
+    0x0FFF, 0xFFFC, 0x0000,
+    0x0FFF, 0xFFFC, 0x0000,
+    0x07FF, 0xFFFC, 0x0000,
+    0x07FF, 0xFFFC, 0x0000,
+    0x03FF, 0xFFFC, 0x0000,
+    0x01FF, 0xFFFC, 0x0000,
+    0x00FF, 0xFFFC, 0x0000,
+    0x00FF, 0xFFFC, 0x0000,
+    0x007F, 0xFFFC, 0x0000,
+    0x001F, 0xFFFC, 0x0000,
+    0x000F, 0xFFFC, 0x0000,
+    0x0007, 0xFFFC, 0x0000,
+    0x0001, 0xFFFC, 0x0000,
+    0x0000, 0x3FFC, 0x0000,
+    0x0000, 0x0080, 0x0000,
+    0x0000, 0x0000, 0x0000,
+};
+
+static const UWORD g_FFSweepSrc3[FORCEFIELD_H*3] = { // frame 3: wiper at x=44
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0008,
+    0x0000, 0x0000, 0x0008,
+    0x0000, 0x0000, 0x0008,
+    0x0000, 0x0000, 0x000C,
+    0x0000, 0x0000, 0x000C,
+    0x0000, 0x0000, 0x000C,
+    0x0000, 0x0000, 0x000C,
+    0x0000, 0x0000, 0x000C,
+    0x0000, 0x0000, 0x000C,
+    0x0000, 0x0000, 0x000E,
+    0x0000, 0x0000, 0x000C,
+    0x0000, 0x0000, 0x000C,
+    0x0000, 0x0000, 0x000C,
+    0x0000, 0x0000, 0x000C,
+    0x0000, 0x0000, 0x000C,
+    0x0000, 0x0000, 0x000C,
+    0x0000, 0x0000, 0x0008,
+    0x0000, 0x0000, 0x0008,
+    0x0000, 0x0000, 0x0008,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+};
+static const UWORD g_FFSweepDst3[FORCEFIELD_H*3] = { // frame 3
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0080, 0x0000,
+    0x0000, 0x3FFE, 0x0000,
+    0x0001, 0xFFFF, 0xC000,
+    0x0007, 0xFFFF, 0xF000,
+    0x000F, 0xFFFF, 0xF800,
+    0x001F, 0xFFFF, 0xFC00,
+    0x007F, 0xFFFF, 0xFF00,
+    0x00FF, 0xFFFF, 0xFF80,
+    0x00FF, 0xFFFF, 0xFF80,
+    0x01FF, 0xFFFF, 0xFFC0,
+    0x03FF, 0xFFFF, 0xFFE0,
+    0x07FF, 0xFFFF, 0xFFF0,
+    0x07FF, 0xFFFF, 0xFFF0,
+    0x0FFF, 0xFFFF, 0xFFF0,
+    0x0FFF, 0xFFFF, 0xFFF0,
+    0x0FFF, 0xFFFF, 0xFFF0,
+    0x1FFF, 0xFFFF, 0xFFF0,
+    0x1FFF, 0xFFFF, 0xFFF0,
+    0x1FFF, 0xFFFF, 0xFFF0,
+    0x1FFF, 0xFFFF, 0xFFF0,
+    0x1FFF, 0xFFFF, 0xFFF0,
+    0x1FFF, 0xFFFF, 0xFFF0,
+    0x3FFF, 0xFFFF, 0xFFF0,
+    0x1FFF, 0xFFFF, 0xFFF0,
+    0x1FFF, 0xFFFF, 0xFFF0,
+    0x1FFF, 0xFFFF, 0xFFF0,
+    0x1FFF, 0xFFFF, 0xFFF0,
+    0x1FFF, 0xFFFF, 0xFFF0,
+    0x1FFF, 0xFFFF, 0xFFF0,
+    0x0FFF, 0xFFFF, 0xFFF0,
+    0x0FFF, 0xFFFF, 0xFFF0,
+    0x0FFF, 0xFFFF, 0xFFF0,
+    0x07FF, 0xFFFF, 0xFFF0,
+    0x07FF, 0xFFFF, 0xFFF0,
+    0x03FF, 0xFFFF, 0xFFE0,
+    0x01FF, 0xFFFF, 0xFFC0,
+    0x00FF, 0xFFFF, 0xFF80,
+    0x00FF, 0xFFFF, 0xFF80,
+    0x007F, 0xFFFF, 0xFF00,
+    0x001F, 0xFFFF, 0xFC00,
+    0x000F, 0xFFFF, 0xF800,
+    0x0007, 0xFFFF, 0xF000,
+    0x0001, 0xFFFF, 0xC000,
+    0x0000, 0x3FFE, 0x0000,
+    0x0000, 0x0080, 0x0000,
+    0x0000, 0x0000, 0x0000,
+};
+
+// Pointer arrays for indexed access to the masks (4 frames each).
+static const UWORD* const g_FFSweepSrcSet[4] = {
+    g_FFSweepSrc0, g_FFSweepSrc1, g_FFSweepSrc2, g_FFSweepSrc3
+};
+static const UWORD* const g_FFSweepDstSet[4] = {
+    g_FFSweepDst0, g_FFSweepDst1, g_FFSweepDst2, g_FFSweepDst3
+};
+
+// g_FFBubScroll0..3: banded-dither disc (r=22) that scrolls vertically.
+// 3 dense rows + 3 sparse rows = 6-row band cycle. 4 masks = one full cycle,
+// each shifted 1 row. Drawn into BPL6 only (normal mode).
+static const UWORD g_FFBubScroll0[FORCEFIELD_H*3] = {
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0080, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0xAAAA, 0x8000,
+    0x0000, 0x0000, 0x0000,
+    0x000F, 0xFFFF, 0xF800,
+    0x0015, 0x5555, 0x5400,
+    0x007F, 0xFFFF, 0xFF00,
+    0x0000, 0x0000, 0x0000,
+    0x00AA, 0xAAAA, 0xAA80,
+    0x0000, 0x0000, 0x0000,
+    0x03FF, 0xFFFF, 0xFFE0,
+    0x0555, 0x5555, 0x5550,
+    0x07FF, 0xFFFF, 0xFFF0,
+    0x0000, 0x0000, 0x0000,
+    0x0AAA, 0xAAAA, 0xAAA8,
+    0x0000, 0x0000, 0x0000,
+    0x1FFF, 0xFFFF, 0xFFFC,
+    0x1555, 0x5555, 0x5554,
+    0x1FFF, 0xFFFF, 0xFFFC,
+    0x0000, 0x0000, 0x0000,
+    0x0AAA, 0xAAAA, 0xAAA8,
+    0x0000, 0x0000, 0x0000,
+    0x3FFF, 0xFFFF, 0xFFFE,
+    0x1555, 0x5555, 0x5554,
+    0x1FFF, 0xFFFF, 0xFFFC,
+    0x0000, 0x0000, 0x0000,
+    0x0AAA, 0xAAAA, 0xAAA8,
+    0x0000, 0x0000, 0x0000,
+    0x1FFF, 0xFFFF, 0xFFFC,
+    0x0555, 0x5555, 0x5550,
+    0x0FFF, 0xFFFF, 0xFFF8,
+    0x0000, 0x0000, 0x0000,
+    0x02AA, 0xAAAA, 0xAAA0,
+    0x0000, 0x0000, 0x0000,
+    0x03FF, 0xFFFF, 0xFFE0,
+    0x0155, 0x5555, 0x5540,
+    0x00FF, 0xFFFF, 0xFF80,
+    0x0000, 0x0000, 0x0000,
+    0x002A, 0xAAAA, 0xAA00,
+    0x0000, 0x0000, 0x0000,
+    0x000F, 0xFFFF, 0xF800,
+    0x0005, 0x5555, 0x5000,
+    0x0001, 0xFFFF, 0xC000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0080, 0x0000,
+    0x0000, 0x0000, 0x0000,
+};
+
+static const UWORD g_FFBubScroll1[FORCEFIELD_H*3] = {
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0080, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0xAAAA, 0x8000,
+    0x0005, 0x5555, 0x5000,
+    0x000F, 0xFFFF, 0xF800,
+    0x0015, 0x5555, 0x5400,
+    0x002A, 0xAAAA, 0xAA00,
+    0x0000, 0x0000, 0x0000,
+    0x00AA, 0xAAAA, 0xAA80,
+    0x0155, 0x5555, 0x5540,
+    0x03FF, 0xFFFF, 0xFFE0,
+    0x0555, 0x5555, 0x5550,
+    0x02AA, 0xAAAA, 0xAAA0,
+    0x0000, 0x0000, 0x0000,
+    0x0AAA, 0xAAAA, 0xAAA8,
+    0x0555, 0x5555, 0x5550,
+    0x1FFF, 0xFFFF, 0xFFFC,
+    0x1555, 0x5555, 0x5554,
+    0x0AAA, 0xAAAA, 0xAAA8,
+    0x0000, 0x0000, 0x0000,
+    0x0AAA, 0xAAAA, 0xAAA8,
+    0x1555, 0x5555, 0x5554,
+    0x3FFF, 0xFFFF, 0xFFFE,
+    0x1555, 0x5555, 0x5554,
+    0x0AAA, 0xAAAA, 0xAAA8,
+    0x0000, 0x0000, 0x0000,
+    0x0AAA, 0xAAAA, 0xAAA8,
+    0x1555, 0x5555, 0x5554,
+    0x1FFF, 0xFFFF, 0xFFFC,
+    0x0555, 0x5555, 0x5550,
+    0x0AAA, 0xAAAA, 0xAAA8,
+    0x0000, 0x0000, 0x0000,
+    0x02AA, 0xAAAA, 0xAAA0,
+    0x0555, 0x5555, 0x5550,
+    0x03FF, 0xFFFF, 0xFFE0,
+    0x0155, 0x5555, 0x5540,
+    0x00AA, 0xAAAA, 0xAA80,
+    0x0000, 0x0000, 0x0000,
+    0x002A, 0xAAAA, 0xAA00,
+    0x0015, 0x5555, 0x5400,
+    0x000F, 0xFFFF, 0xF800,
+    0x0005, 0x5555, 0x5000,
+    0x0000, 0xAAAA, 0x8000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0080, 0x0000,
+    0x0000, 0x0000, 0x0000,
+};
+
+static const UWORD g_FFBubScroll2[FORCEFIELD_H*3] = {
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0080, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0001, 0xFFFF, 0xC000,
+    0x0005, 0x5555, 0x5000,
+    0x000F, 0xFFFF, 0xF800,
+    0x0000, 0x0000, 0x0000,
+    0x002A, 0xAAAA, 0xAA00,
+    0x0000, 0x0000, 0x0000,
+    0x00FF, 0xFFFF, 0xFF80,
+    0x0155, 0x5555, 0x5540,
+    0x03FF, 0xFFFF, 0xFFE0,
+    0x0000, 0x0000, 0x0000,
+    0x02AA, 0xAAAA, 0xAAA0,
+    0x0000, 0x0000, 0x0000,
+    0x0FFF, 0xFFFF, 0xFFF8,
+    0x0555, 0x5555, 0x5550,
+    0x1FFF, 0xFFFF, 0xFFFC,
+    0x0000, 0x0000, 0x0000,
+    0x0AAA, 0xAAAA, 0xAAA8,
+    0x0000, 0x0000, 0x0000,
+    0x1FFF, 0xFFFF, 0xFFFC,
+    0x1555, 0x5555, 0x5554,
+    0x3FFF, 0xFFFF, 0xFFFE,
+    0x0000, 0x0000, 0x0000,
+    0x0AAA, 0xAAAA, 0xAAA8,
+    0x0000, 0x0000, 0x0000,
+    0x1FFF, 0xFFFF, 0xFFFC,
+    0x1555, 0x5555, 0x5554,
+    0x1FFF, 0xFFFF, 0xFFFC,
+    0x0000, 0x0000, 0x0000,
+    0x0AAA, 0xAAAA, 0xAAA8,
+    0x0000, 0x0000, 0x0000,
+    0x07FF, 0xFFFF, 0xFFF0,
+    0x0555, 0x5555, 0x5550,
+    0x03FF, 0xFFFF, 0xFFE0,
+    0x0000, 0x0000, 0x0000,
+    0x00AA, 0xAAAA, 0xAA80,
+    0x0000, 0x0000, 0x0000,
+    0x007F, 0xFFFF, 0xFF00,
+    0x0015, 0x5555, 0x5400,
+    0x000F, 0xFFFF, 0xF800,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0xAAAA, 0x8000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0080, 0x0000,
+    0x0000, 0x0000, 0x0000,
+};
+
+static const UWORD g_FFBubScroll3[FORCEFIELD_H*3] = {
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0x0080, 0x0000,
+    0x0000, 0x1554, 0x0000,
+    0x0001, 0xFFFF, 0xC000,
+    0x0005, 0x5555, 0x5000,
+    0x000A, 0xAAAA, 0xA800,
+    0x0000, 0x0000, 0x0000,
+    0x002A, 0xAAAA, 0xAA00,
+    0x0055, 0x5555, 0x5500,
+    0x00FF, 0xFFFF, 0xFF80,
+    0x0155, 0x5555, 0x5540,
+    0x02AA, 0xAAAA, 0xAAA0,
+    0x0000, 0x0000, 0x0000,
+    0x02AA, 0xAAAA, 0xAAA0,
+    0x0555, 0x5555, 0x5550,
+    0x0FFF, 0xFFFF, 0xFFF8,
+    0x0555, 0x5555, 0x5550,
+    0x0AAA, 0xAAAA, 0xAAA8,
+    0x0000, 0x0000, 0x0000,
+    0x0AAA, 0xAAAA, 0xAAA8,
+    0x1555, 0x5555, 0x5554,
+    0x1FFF, 0xFFFF, 0xFFFC,
+    0x1555, 0x5555, 0x5554,
+    0x2AAA, 0xAAAA, 0xAAAA,
+    0x0000, 0x0000, 0x0000,
+    0x0AAA, 0xAAAA, 0xAAA8,
+    0x1555, 0x5555, 0x5554,
+    0x1FFF, 0xFFFF, 0xFFFC,
+    0x1555, 0x5555, 0x5554,
+    0x0AAA, 0xAAAA, 0xAAA8,
+    0x0000, 0x0000, 0x0000,
+    0x0AAA, 0xAAAA, 0xAAA8,
+    0x0555, 0x5555, 0x5550,
+    0x07FF, 0xFFFF, 0xFFF0,
+    0x0555, 0x5555, 0x5550,
+    0x02AA, 0xAAAA, 0xAAA0,
+    0x0000, 0x0000, 0x0000,
+    0x00AA, 0xAAAA, 0xAA80,
+    0x0055, 0x5555, 0x5500,
+    0x007F, 0xFFFF, 0xFF00,
+    0x0015, 0x5555, 0x5400,
+    0x000A, 0xAAAA, 0xA800,
+    0x0000, 0x0000, 0x0000,
+    0x0000, 0xAAAA, 0x8000,
+    0x0000, 0x1554, 0x0000,
+    0x0000, 0x0080, 0x0000,
+    0x0000, 0x0000, 0x0000,
+};
+
+static const UWORD* const g_FFBubScrollSet[4] = {
+    g_FFBubScroll0, g_FFBubScroll1, g_FFBubScroll2, g_FFBubScroll3
+};
+
+// g_FrameCounter must be declared before DrawForceField uses it (for the
+// scrolling-bubble animation). The real definition is here so the function
+// can see it; GAME STATE code below can still access it normally.
+__attribute__((externally_visible)) volatile short g_FrameCounter = 0;
+
+
+// Draw a 48x48 1-bit mask into the given bitplane (3=BPL4, 5=BPL6, etc.).
+// The mask is ORed into the destination plane. Multiple calls with different
+// planes can be used to combine BPL4 + BPL6 (e.g. for the polarity-sweep).
+static void DrawForceFieldMask(UBYTE* screen_mem, short x, short y,
+                              const UWORD* mask, int planeIdx) {
+    if (x <= -FORCEFIELD_W || x >= SCREEN_W || y <= -FORCEFIELD_H || y >= SCREEN_H) return;
+    UWORD shift = (UWORD)(x & 15);
+    UWORD rows  = FORCEFIELD_H;
+    UWORD skip  = 0;
+    if (y < 0) { skip = (UWORD)(-y); rows = (UWORD)(FORCEFIELD_H - skip); y = 0; }
+    if (y + (short)rows > SCREEN_H) rows = (UWORD)(SCREEN_H - y);
+    if (rows == 0) return;
+    UWORD wx = (UWORD)(x < 0 ? 0 : x) >> 4;
+    UWORD* plane = (UWORD*)(screen_mem + planeIdx * PLANE_BYTES);
+    for (UWORD row = 0; row < rows; row++) {
+        UWORD ri   = row + skip;
+        UWORD m0 = mask[ri*3], m1 = mask[ri*3+1], m2 = mask[ri*3+2];
+        UWORD mv0 = m0 >> shift;
+        UWORD mv1 = shift ? (UWORD)((m0 << (16-shift)) | (m1 >> shift)) : m1;
+        UWORD mv2 = shift ? (UWORD)((m1 << (16-shift)) | (m2 >> shift)) : m2;
+        UWORD ry   = (UWORD)y + row;
+        UWORD base = ry * (ROW_BYTES / 2) + wx;
+        plane[base]   |= mv0;
+        if (wx + 1 < ROW_BYTES / 2) plane[base+1] |= mv1;
+        if (wx + 2 < ROW_BYTES / 2) plane[base+2] |= mv2;
+        // 4th word: the rightmost `shift` pixels of the mask spill over
+        // the 3 standard words. Without this the right edge of the bubble
+        // (or the sweep) is clipped when the dome isn't word-aligned.
+        if (shift > 0 && wx + 3 < ROW_BYTES / 2) {
+            plane[base+3] |= m2 << (16 - shift);
+        }
+    }
+}
+
+// Draw the force field. Two modes:
+//   - Normal  (transition == 0): scrolling banded-dither bubble in BPL6
+//                                 (Sonic 1-style energy lines). Drawn BEFORE
+//                                 the ship so the ship shows on top.
+//   - Sweep   (transition > 0):  OPAQUE disc split by a vertical wiper,
+//                                 BPL4 = source (old polarity), BPL6 = dest
+//                                 (new polarity). Drawn AFTER the ship so the
+//                                 dome covers the ship. The wiper sweeps from
+//                                 left to right (sweepDir=0, going to black)
+//                                 or right to left (sweepDir=1, going to white).
+static void DrawForceField(UBYTE* screen_mem, short shipX, short shipY,
+                           short pulse, short transition, short sweepDir) {
+    // Mask is 48x48 centered at (24,24). Ship center is (shipX+16, shipY+12),
+    // so draw the mask at (shipX-8, shipY-12).
+    short mx = (short)(shipX - 8);
+    short my = (short)(shipY - 12);
+    (void)pulse;  // reserved for future size cycling
+
+    if (transition > 0) {
+        // Polarity sweep. transition counts down 4..1. phase = 0..3.
+        short phase = 4 - transition;
+        if (phase < 0) phase = 0;
+        if (phase > 3) phase = 3;
+        // Forward (going to black): play frames 0,1,2,3. Reverse: 3,2,1,0.
+        short idx = (sweepDir == 0) ? phase : (3 - phase);
+        // Forward: BPL4 = source (right of wiper), BPL6 = destination (left).
+        // Reverse: swap the BPL assignments so destination still ends up on
+        // the right and source on the left of the wiper.
+        if (sweepDir == 0) {
+            DrawForceFieldMask(screen_mem, mx, my, g_FFSweepSrcSet[idx], 3); // BPL4
+            DrawForceFieldMask(screen_mem, mx, my, g_FFSweepDstSet[idx], 5); // BPL6
+        } else {
+            DrawForceFieldMask(screen_mem, mx, my, g_FFSweepSrcSet[idx], 5); // BPL6
+            DrawForceFieldMask(screen_mem, mx, my, g_FFSweepDstSet[idx], 3); // BPL4
+        }
+    } else {
+        // Normal scrolling bubble. Drawn before the ship.
+        short scroll = (g_FrameCounter >> 3) & 3;
+        DrawForceFieldMask(screen_mem, mx, my, g_FFBubScrollSet[scroll], 5);  // BPL6 only
+    }
+}
 
 // ============================================================================
 // COPPER LIST HELPERS
@@ -590,10 +1319,10 @@ static UWORD g_Palette[32] = {
     0x0000,              //  7
     // PF2 (game sprites): slots 8-15
     0x0000,              //  8  PF2 transparent (shows PF1 behind)
-    0x0444,              //  9  PF2 dark grey
-    0x0888,              // 10  PF2 mid grey
+    0x0FFF,              //  9  PF2 white (white enemy shots)
+    0x0111,              // 10  PF2 near-black (black enemy shots)
     0x0CCC,              // 11  PF2 light grey
-    0x0FF0,              // 12  PF2 yellow (shots)
+    0x0FF0,              // 12  PF2 yellow (player shots)
     0x0212,              // 13  PF2 border dark
     0x0756,              // 14  PF2 border mid
     0x0434,              // 15  PF2 border light
@@ -619,7 +1348,6 @@ static UWORD g_Palette[32] = {
 // GAME STATE
 // ============================================================================
 
-static volatile short g_FrameCounter = 0;
 static short g_GameState  = GS_PLAYING;
 static short g_TitleMode  = TS_MENU;
 static short g_CurrentBiome = 0;
@@ -633,13 +1361,23 @@ static short g_ShipExploding  = 0;
 static short g_ShipExplTimer  = 0;
 
 // Shots
-static TShot      g_Shots[MAX_SHOTS];
-static short      g_FireCooldown = 0;
+__attribute__((externally_visible)) TShot      g_Shots[MAX_SHOTS];
+static short      g_FireCooldown     = 0;
+// Polarity: 0 = white (default), 1 = black (when fire is held)
+static short      g_ShipPolarity     = 0;
+static short      g_FireHoldFrames   = 0;
+
+// Force field: rendered as a 1-bit BPL6 blit (rectangular ring around the ship).
+// In dual-playfield mode OCS hardware sprites are drawn BEHIND both playfields,
+// so a hardware-sprite approach is invisible. Using BPL6 (the 3rd plane of PF2,
+// unused in the game area) keeps the ring on top of the ship + playfield pixels.
+static short      g_ForceFieldTransition = 0;   // frames left in polarity sweep (4=just started, 0=done)
+static short      g_ForceFieldSweepDir   = 0;   // 0=white->black (wiper L->R), 1=black->white (R->L)
 
 // Enemies
-static TEnemy     g_Enemies[MAX_ENEMIES];
-static TEnemyShot g_EnemyShots[MAX_ENEMY_SHOTS];
-static TExplosion g_Explosions[MAX_EXPLOSIONS];
+__attribute__((externally_visible)) TEnemy     g_Enemies[MAX_ENEMIES];
+__attribute__((externally_visible)) TEnemyShot g_EnemyShots[MAX_ENEMY_SHOTS];
+__attribute__((externally_visible)) TExplosion g_Explosions[MAX_EXPLOSIONS];
 
 // Score / progress
 static unsigned short g_Score      = 0;
@@ -651,7 +1389,7 @@ static unsigned short g_NextLifeAt = EXTRA_LIFE_EVERY;
 static short g_WaveActive   = 0;
 static short g_WaveTotal    = 0;
 static short g_WaveSpawned  = 0;
-static short g_WaveKilled   = 0;
+__attribute__((externally_visible)) short g_WaveKilled   = 0;
 static short g_SpawnTimer   = SPAWN_FIRST_DELAY;
 
 // Starfield
@@ -667,31 +1405,31 @@ static THiScore g_HiScores[HISCORE_COUNT];
 // ============================================================================
 
 static const TLevelConfig g_Levels[ENDGAME_FINAL_LEVEL] = {
-    /* 1*/  { 3, 3, LMASK_BASIC,                        0 },
-    /* 2*/  { 3, 4, LMASK_BASIC|LMASK_FAST,             0 },
-    /* 3*/  { 4, 3, LMASK_BASIC|LMASK_FAST,             0 },
-    /* 4*/  { 4, 4, LMASK_BASIC|LMASK_FAST|LMASK_HEAVY, 0 },
-    /* 5*/  { 1, 1, 0,                                  LCFG_F_BOSS1 },
-    /* 6*/  { 4, 4, LMASK_BASIC|LMASK_FAST|LMASK_DIVER, 0 },
-    /* 7*/  { 4, 4, LMASK_FAST|LMASK_HEAVY|LMASK_DIVER, 0 },
-    /* 8*/  { 5, 4, LMASK_BASIC|LMASK_FAST|LMASK_BOMBER,0 },
-    /* 9*/  { 5, 5, LMASK_FAST|LMASK_HEAVY|LMASK_DIVER|LMASK_BOMBER, 0 },
-    /*10*/  { 1, 1, 0,                                  LCFG_F_BOSS1 },
-    /*11*/  { 5, 4, LMASK_BASIC|LMASK_FAST|LMASK_HEAVY|LMASK_DIVER, 0 },
-    /*12*/  { 5, 5, LMASK_FAST|LMASK_HEAVY|LMASK_DIVER|LMASK_BOMBER, 0 },
-    /*13*/  { 6, 4, LMASK_BASIC|LMASK_FAST|LMASK_HEAVY|LMASK_BOMBER, 0 },
-    /*14*/  { 6, 5, LMASK_FAST|LMASK_HEAVY|LMASK_DIVER|LMASK_BOMBER, 0 },
-    /*15*/  { 1, 1, 0,                                  LCFG_F_BOSS1|LCFG_F_BOSS2 },
-    /*16*/  { 6, 5, LMASK_BASIC|LMASK_FAST|LMASK_HEAVY|LMASK_DIVER|LMASK_BOMBER, 0 },
-    /*17*/  { 7, 5, LMASK_FAST|LMASK_HEAVY|LMASK_DIVER|LMASK_BOMBER, 0 },
-    /*18*/  { 7, 6, LMASK_BASIC|LMASK_FAST|LMASK_HEAVY|LMASK_DIVER|LMASK_BOMBER, 0 },
-    /*19*/  { 7, 6, LMASK_FAST|LMASK_HEAVY|LMASK_DIVER|LMASK_BOMBER, 0 },
-    /*20*/  { 1, 1, 0,                                  LCFG_F_BOSS1|LCFG_F_BOSS2 },
-    /*21*/  { 8, 6, LMASK_BASIC|LMASK_FAST|LMASK_HEAVY|LMASK_DIVER|LMASK_BOMBER, 0 },
-    /*22*/  { 8, 6, LMASK_FAST|LMASK_HEAVY|LMASK_DIVER|LMASK_BOMBER, 0 },
-    /*23*/  { 8, 7, LMASK_BASIC|LMASK_FAST|LMASK_HEAVY|LMASK_DIVER|LMASK_BOMBER, 0 },
-    /*24*/  { 8, 7, LMASK_FAST|LMASK_HEAVY|LMASK_DIVER|LMASK_BOMBER, 0 },
-    /*25*/  { 1, 1, 0,                                  LCFG_F_BOSS1|LCFG_F_BOSS2 },
+    /* 1*/  { 3, 3, LMASK_BASIC,                       0 },
+    /* 2*/  { 3, 4, LMASK_BASIC|LMASK_FAST,            0 },
+    /* 3*/  { 4, 3, LMASK_BASIC|LMASK_FAST,            0 },
+    /* 4*/  { 4, 4, LMASK_BASIC|LMASK_FAST,            0 },
+    /* 5*/  { 1, 1, 0,                                 LCFG_F_BOSS1 },
+    /* 6*/  { 4, 4, LMASK_BASIC|LMASK_FAST,            0 },
+    /* 7*/  { 4, 4, LMASK_BASIC|LMASK_FAST,            0 },
+    /* 8*/  { 5, 4, LMASK_BASIC|LMASK_FAST,            0 },
+    /* 9*/  { 5, 5, LMASK_BASIC|LMASK_FAST,            0 },
+    /*10*/  { 1, 1, 0,                                 LCFG_F_BOSS1 },
+    /*11*/  { 5, 4, LMASK_BASIC|LMASK_FAST,            0 },
+    /*12*/  { 5, 5, LMASK_BASIC|LMASK_FAST,            0 },
+    /*13*/  { 6, 4, LMASK_BASIC|LMASK_FAST,            0 },
+    /*14*/  { 6, 5, LMASK_BASIC|LMASK_FAST,            0 },
+    /*15*/  { 1, 1, 0,                                 LCFG_F_BOSS1|LCFG_F_BOSS2 },
+    /*16*/  { 6, 5, LMASK_BASIC|LMASK_FAST,            0 },
+    /*17*/  { 7, 5, LMASK_BASIC|LMASK_FAST,            0 },
+    /*18*/  { 7, 6, LMASK_BASIC|LMASK_FAST,            0 },
+    /*19*/  { 7, 6, LMASK_BASIC|LMASK_FAST,            0 },
+    /*20*/  { 1, 1, 0,                                 LCFG_F_BOSS1|LCFG_F_BOSS2 },
+    /*21*/  { 8, 6, LMASK_BASIC|LMASK_FAST,            0 },
+    /*22*/  { 8, 6, LMASK_BASIC|LMASK_FAST,            0 },
+    /*23*/  { 8, 7, LMASK_BASIC|LMASK_FAST,            0 },
+    /*24*/  { 8, 7, LMASK_BASIC|LMASK_FAST,            0 },
+    /*25*/  { 1, 1, 0,                                 LCFG_F_BOSS1|LCFG_F_BOSS2 },
 };
 
 // ============================================================================
@@ -740,7 +1478,9 @@ static void ResetShip() {
     g_ShipExploding  = 0;
     g_ShipExplTimer  = 0;
     for (int i = 0; i < MAX_SHOTS; i++) g_Shots[i].active = 0;
-    g_FireCooldown = 0;
+    g_FireCooldown    = 0;
+    g_ShipPolarity    = 0;
+    g_FireHoldFrames  = 0;
 }
 
 static void ResetGameSession() {
@@ -767,9 +1507,9 @@ static void ResetGameSession() {
 // ============================================================================
 
 static short PickEnemyType(unsigned char mask) {
-    short available[5];
+    short available[2];
     short count = 0;
-    for (short t = 0; t < 5; t++) {
+    for (short t = 0; t < 2; t++) {
         if (mask & (1 << t)) available[count++] = t;
     }
     if (count == 0) return -1;
@@ -800,9 +1540,6 @@ static void SpawnEnemy(short type) {
     switch (type) {
         case ENEMY_TYPE_BASIC:  e->health = 1; e->vy = ENEMY_SPEED_BASIC;  break;
         case ENEMY_TYPE_FAST:   e->health = 1; e->vy = ENEMY_SPEED_FAST;   break;
-        case ENEMY_TYPE_HEAVY:  e->health = 3; e->vy = ENEMY_SPEED_HEAVY;  break;
-        case ENEMY_TYPE_DIVER:  e->health = 2; e->vy = ENEMY_SPEED_DIVER;  break;
-        case ENEMY_TYPE_BOMBER: e->health = 2; e->vy = ENEMY_SPEED_BOMBER; break;
     }
 }
 
@@ -934,34 +1671,52 @@ static void RenderFrame(UBYTE* screen_mem) {
     }
     if (g_GameState == GS_PLAYING || g_GameState == GS_GAMEOVER) {
         if (!g_ShipExploding) {
-            UBYTE animFrame = (UBYTE)((g_FrameCounter >> 2) & 3);
-            DrawShipAnim(screen_mem, g_ShipX, g_ShipY, animFrame);
+            if (g_ForceFieldTransition > 0) {
+                // During a polarity sweep: draw the ship first, then the
+                // OPAQUE dome on top so the ship is hidden by the wipe.
+                UBYTE animFrame = (UBYTE)((g_FrameCounter >> 2) & 3);
+                DrawShipAnim(screen_mem, g_ShipX, g_ShipY, animFrame, (UBYTE)g_ShipPolarity);
+                DrawForceField(screen_mem, g_ShipX, g_ShipY, 0, g_ForceFieldTransition, g_ForceFieldSweepDir);
+            } else {
+                // Normal: scrolling bubble (BPL6 annulus) before the ship.
+                short ffPulse = (short)((g_FrameCounter / 6) % 3);
+                DrawForceField(screen_mem, g_ShipX, g_ShipY, ffPulse, 0, 0);
+                UBYTE animFrame = (UBYTE)((g_FrameCounter >> 2) & 3);
+                DrawShipAnim(screen_mem, g_ShipX, g_ShipY, animFrame, (UBYTE)g_ShipPolarity);
+            }
         }
         for (int i = 0; i < MAX_ENEMIES; i++) {
             TEnemy* e = &g_Enemies[i];
             if (!e->active) continue;
-            if (e->type == ENEMY_TYPE_BASIC) {
-                DrawBob32_2bpl(screen_mem, g_EnemyBasic24Mask,
-                               e->variant ? g_EnemyBasic24InvHi : g_EnemyBasic24Hi,
-                               e->variant ? g_EnemyBasic24InvLo : g_EnemyBasic24Lo,
-                               e->x, e->y, 1, 3);
-            } else if (e->type == ENEMY_TYPE_FAST) {
-                DrawBob16_2bpl(screen_mem, g_EnemyFast16Mask,
-                               e->variant ? g_EnemyFast16InvHi : g_EnemyFast16Hi,
-                               e->variant ? g_EnemyFast16InvLo : g_EnemyFast16Lo,
-                               e->x, e->y, 1, 3, 16);
-            } else {
-                DrawBob16(screen_mem, g_EnemyMasks[e->type], g_EnemyDatas[e->type],
-                          e->x, e->y, g_EnemyColor[e->type], g_EnemyRows[e->type]);
+            switch (e->type) {
+                case ENEMY_TYPE_BASIC:
+                    DrawBob32_2bpl(screen_mem, g_EnemyBasic24Mask,
+                                   e->variant ? g_EnemyBasic24InvHi : g_EnemyBasic24Hi,
+                                   e->variant ? g_EnemyBasic24InvLo : g_EnemyBasic24Lo,
+                                   e->x, e->y, 1, 3);
+                    break;
+                case ENEMY_TYPE_FAST:
+                    DrawBob16_2bpl(screen_mem, g_EnemyFast16Mask,
+                                   e->variant ? g_EnemyFast16InvHi : g_EnemyFast16Hi,
+                                   e->variant ? g_EnemyFast16InvLo : g_EnemyFast16Lo,
+                                   e->x, e->y, 1, 3, 16);
+                    break;
+                default:
+                    break;  // BOSS and unknown types handled elsewhere
             }
         }
         for (int i = 0; i < MAX_SHOTS; i++) {
             if (!g_Shots[i].active) continue;
-            DrawBob16(screen_mem, g_ShotMask, g_ShotData, g_Shots[i].x, g_Shots[i].y, 0x04, 8);
+            // variant 0 = white (slot 9, colorMask 0x01), variant 1 = black (slot 10, colorMask 0x02)
+            UBYTE pcm = (g_Shots[i].variant == 0) ? 0x01 : 0x02;
+            DrawBob16(screen_mem, g_ShotMask, g_ShotData, g_Shots[i].x, g_Shots[i].y, pcm, 8);
         }
         for (int i = 0; i < MAX_ENEMY_SHOTS; i++) {
             if (!g_EnemyShots[i].active) continue;
-            // Enemy shots drawn by hardware sprites (DMA 0-7)
+            // white shot (variant=0) uses slot 9 (white), black shot (variant=1) uses slot 10 (near-black)
+            UBYTE cm = (g_EnemyShots[i].variant == 0) ? 0x01 : 0x02;
+            DrawBob16(screen_mem, g_EShotMask, g_EShotData,
+                      g_EnemyShots[i].x, g_EnemyShots[i].y, cm, 6);
         }
         for (int i = 0; i < MAX_EXPLOSIONS; i++) {
             TExplosion* ex = &g_Explosions[i];
@@ -1064,12 +1819,7 @@ int main() {
         pos[0] = (USHORT)(256 << 8);
         pos[1] = 0;
     }
-    // Test: show sprite 0 at fixed position
-    {
-        volatile USHORT* spr = (volatile USHORT*)0xDFF140;
-        spr[0] = (USHORT)((150 << 8) | (100 >> 1));  // y=150, x=100
-        spr[1] = (USHORT)((100 & 1) << 0);
-    }
+
 
     // Install VBlank interrupt
     SetInterruptHandler((APTR)VBlankHandler);
@@ -1151,19 +1901,41 @@ int main() {
                 if ((joy & JOY_UP)    && g_ShipY > SHIP_MIN_Y) g_ShipY -= SHIP_SPEED_Y;
                 if ((joy & JOY_DOWN)  && g_ShipY < SHIP_MAX_Y) g_ShipY += SHIP_SPEED_Y;
 
-                // Fire
-                if ((joy & JOY_FIRE) && g_FireCooldown == 0) {
-                    for (int i = 0; i < MAX_SHOTS; i++) {
-                        if (!g_Shots[i].active) {
-                            g_Shots[i].active = 1;
-                            g_Shots[i].x = (short)(g_ShipX + SHIP_W/2 - SHOT_W/2);
-                            g_Shots[i].y = (short)(g_ShipY - SHOT_H);
-                            g_FireCooldown = FIRE_COOLDOWN;
-                            break;
+                // Fire with polarity swap
+                {
+                    short fireHeldNow = (joy & JOY_FIRE) ? 1 : 0;
+                    if (fireHeldNow) {
+                        g_FireHoldFrames++;
+                        // Switch to black polarity after holding for POLARITY_HOLD_FRAMES
+                        if (g_FireHoldFrames == POLARITY_HOLD_FRAMES) {
+                            g_ForceFieldTransition = 4;     // 4-frame sweep
+                            g_ForceFieldSweepDir   = 0;     // white->black: wiper L->R
+                        }
+                        g_ShipPolarity = (g_FireHoldFrames >= POLARITY_HOLD_FRAMES) ? 1 : 0;
+                    } else {
+                        if (g_ShipPolarity == 1) {
+                            g_ForceFieldTransition = 4;     // 4-frame sweep
+                            g_ForceFieldSweepDir   = 1;     // black->white: wiper R->L
+                        }
+                        g_ShipPolarity   = 0;
+                        g_FireHoldFrames = 0;
+                    }
+                    // Auto-fire on every cooldown cycle (existing behavior)
+                    if (fireHeldNow && g_FireCooldown == 0) {
+                        for (int i = 0; i < MAX_SHOTS; i++) {
+                            if (!g_Shots[i].active) {
+                                g_Shots[i].active  = 1;
+                                g_Shots[i].variant = (short)g_ShipPolarity;
+                                g_Shots[i].x = (short)(g_ShipX + SHIP_W/2 - SHOT_W/2);
+                                g_Shots[i].y = (short)(g_ShipY - SHOT_H);
+                                g_FireCooldown = FIRE_COOLDOWN;
+                                break;
+                            }
                         }
                     }
+                    if (g_FireCooldown > 0) g_FireCooldown--;
+                    if (g_ForceFieldTransition > 0) g_ForceFieldTransition--;
                 }
-                if (g_FireCooldown > 0) g_FireCooldown--;
 
                 if (CheckBorderCollision(g_ShipX, g_ShipY, g_BorderScrollY)) {
                     SpawnExplosion(g_ShipX, g_ShipY, EXP_KIND_SHIP);
@@ -1218,26 +1990,16 @@ int main() {
                 }
             }
 
-            // --- Update player shots ---
-            for (int i = 0; i < MAX_SHOTS; i++) {
-                if (!g_Shots[i].active) continue;
-                g_Shots[i].y -= SHOT_SPEED;
-                if (g_Shots[i].y < GAME_Y0) g_Shots[i].active = 0;
-            }
+            // --- Update player shots (68k ASM) ---
+            AsmUpdatePlayerShots();
 
-            // --- HW sprite test: show sprite 0 always visible ---
-            {
-                volatile USHORT* spr = (volatile USHORT*)0xDFF140;
-                spr[0] = (USHORT)((100 << 8) | (160 >> 1));
-                spr[1] = (USHORT)((160 & 1) << 0);
-            }
+            // --- Update enemies (68k ASM: just movement + off-screen) ---
+            AsmUpdateEnemies();
 
-            // --- Update enemies ---
+            // Simple shot-enemy collision
             for (int i = 0; i < MAX_ENEMIES; i++) {
                 TEnemy* e = &g_Enemies[i];
                 if (!e->active) continue;
-                e->y += e->vy;
-                if (e->y > GAME_H) { e->active = 0; g_WaveKilled++; }
 
                 // Simple shot-enemy collision
                 for (int s = 0; s < MAX_SHOTS; s++) {
@@ -1254,9 +2016,6 @@ int main() {
                             switch (e->type) {
                                 case ENEMY_TYPE_BASIC:  g_Score += ENEMY_SCORE_BASIC;  break;
                                 case ENEMY_TYPE_FAST:   g_Score += ENEMY_SCORE_FAST;   break;
-                                case ENEMY_TYPE_HEAVY:  g_Score += ENEMY_SCORE_HEAVY;  break;
-                                case ENEMY_TYPE_DIVER:  g_Score += ENEMY_SCORE_DIVER;  break;
-                                case ENEMY_TYPE_BOMBER: g_Score += ENEMY_SCORE_BOMBER; break;
                             }
                             SpawnExplosion(e->x, e->y, EXP_KIND_ENEMY);
                             // Check extra life
@@ -1285,40 +2044,72 @@ int main() {
                 }
             }
 
-            // --- Update enemy shots ---
+            // --- Update enemy shots (68k ASM: just movement + off-screen) ---
+            AsmUpdateEnemyShots();
+
+            // Enemy shot vs ship collision (only shots of opposite polarity damage the ship)
             for (int i = 0; i < MAX_ENEMY_SHOTS; i++) {
                 if (!g_EnemyShots[i].active) continue;
-                g_EnemyShots[i].y += 3;
-                if (g_EnemyShots[i].y >= SCREEN_H) g_EnemyShots[i].active = 0;
-            }
-
-            // --- Enemy firing (basic) ---
-            for (int i = 0; i < MAX_ENEMIES; i++) {
-                TEnemy* e = &g_Enemies[i];
-                if (!e->active) continue;
-                if ((g_FrameCounter + i * 7) % 30 == 0) {
-                    for (int j = 0; j < MAX_ENEMY_SHOTS; j++) {
-                        if (!g_EnemyShots[j].active) {
-                            g_EnemyShots[j].active = 1;
-                            g_EnemyShots[j].x = (short)(e->x + ENEMY_W/2);
-                            g_EnemyShots[j].y = (short)(e->y + ENEMY_H);
-                            break;
-                        }
+                if (!g_ShipExploding && g_EnemyShots[i].variant != g_ShipPolarity) {
+                    short sx = g_EnemyShots[i].x;
+                    short sy = g_EnemyShots[i].y;
+                    if (sx + ENEMYSHOT_W > g_ShipX + SHIP_HIT_OX &&
+                        sx               < g_ShipX + SHIP_HIT_OX + SHIP_HIT_W &&
+                        sy + ENEMYSHOT_H > g_ShipY + SHIP_HIT_OY &&
+                        sy               < g_ShipY + SHIP_HIT_OY + SHIP_HIT_H) {
+                        g_EnemyShots[i].active = 0;
+                        SpawnExplosion(g_ShipX, g_ShipY, EXP_KIND_SHIP);
+                        g_ShipExploding  = 1;
+                        g_ShipExplTimer  = SHIP_EXPL_TIMER;
+                        g_Lives--;
                     }
                 }
             }
 
-            // --- Update explosions ---
-            for (int i = 0; i < MAX_EXPLOSIONS; i++) {
-                if (!g_Explosions[i].active) continue;
-                g_Explosions[i].frame++;
-                if (g_Explosions[i].frame >= EXP_FRAMES * 4)
-                    g_Explosions[i].active = 0;
-            }
+            // --- Enemy firing (68k ASM) ---
+            AsmEnemyFire();
+
+            // --- Update explosions (68k ASM) ---
+            AsmUpdateExplosions();
 
             // Check game over
             if (g_GameState == GS_PLAYING && g_Level > ENDGAME_FINAL_LEVEL)
                 g_GameState = GS_WIN;
+
+            // --- Update force field colors (BPL6 = g_Palette[12], BPL4 = g_Palette[10]) ---
+            // The dome is drawn into BPL6 (annulus or sweep destination) and
+            // BPL4 (sweep source). Both come from g_Palette, reloaded by the
+            // Copper every frame in BuildCopperListEx. (Writing custom->color[]
+            // directly would be silently overwritten by the Copper.)
+            //
+            // Amiga colors are 0xRGB (4 bits each):
+            //   0x0CF = light blue, 0x0FF = cyan, 0xA00 = dark red, 0xF00 = red.
+            if (g_ShipExploding) {
+                g_Palette[10] = 0x000;
+                g_Palette[12] = 0x000;
+            } else if (g_ForceFieldTransition > 0) {
+                // Polarity sweep: split-color dome (BPL4=source, BPL6=dest)
+                if (g_ForceFieldSweepDir == 0) {
+                    // white->black: blue sweeps out, red sweeps in from the left
+                    g_Palette[10] = 0x0CF;  // BPL4: source = light blue
+                    g_Palette[12] = 0xF00;  // BPL6: destination = red
+                } else {
+                    // black->white: red sweeps out, blue sweeps in from the right
+                    g_Palette[10] = 0xA00;  // BPL4: source = dark red
+                    g_Palette[12] = 0x0CF;  // BPL6: destination = light blue
+                }
+            } else {
+                // Normal scrolling bubble: single color, pulsing.
+                short pulse = (short)((g_FrameCounter >> 2) & 0x1F);
+                g_Palette[10] = 0x0111;  // BPL4: keep player-shot near-black
+                if (g_ShipPolarity == 0) {
+                    // White polarity: light blue / cyan
+                    g_Palette[12] = (pulse < 16) ? (USHORT)0x0CF : (USHORT)0x0FF;
+                } else {
+                    // Black polarity: dark red / red
+                    g_Palette[12] = (pulse < 16) ? (USHORT)0xA00 : (USHORT)0xF00;
+                }
+            }
 
         } else if (g_GameState == GS_GAMEOVER || g_GameState == GS_WIN) {
             if (joy & JOY_FIRE) {
@@ -1339,6 +2130,7 @@ int main() {
     FreeMem(bg_buf, BG_PLANE_BYTES * BG_BPL);
     FreeMem(copper1, 1024);
     FreeMem(copper2, 1024);
+    // (no per-frame resources to free)
 
     CloseLibrary((struct Library*)DOSBase);
     CloseLibrary((struct Library*)GfxBase);

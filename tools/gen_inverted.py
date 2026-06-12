@@ -2,15 +2,16 @@
 import sys
 
 def invert_2bpl(mask, dataHi, dataLo, count):
-    """Invert greyscale: 1<->3, 2<->2, 0->0.
-    PF2 2-bitplane: 0=transparent, 1=dark, 2=mid, 3=light."""
+    """Invert polarity: 1<->2, 0/3 stay the same.
+    PF2 2-bitplane: 0=transparent, 1=white (slot 9), 2=black (slot 10), 3=light grey (slot 11).
+    Swapping 1<->2 makes the body black and the outline white (true black enemy)."""
     invDataHi = []
     invDataLo = []
     for i in range(count):
         m = mask[i]
         h = dataHi[i]
         l = dataLo[i]
-        # For each pixel bit, compute PF2 color and invert within 1-3 range
+        # For each pixel bit, compute PF2 color and swap 1<->2
         new_h = 0
         new_l = 0
         for bit in range(16):
@@ -23,10 +24,10 @@ def invert_2bpl(mask, dataHi, dataLo, count):
             else:
                 color = (lo_bit << 1) | hi_bit  # 0-3
                 if color == 1:
-                    color = 3
-                elif color == 3:
+                    color = 2
+                elif color == 2:
                     color = 1
-                # color 0 stays 0, color 2 stays 2
+                # color 0 stays 0, color 3 stays 3
                 new_hi = color & 1
                 new_lo = (color >> 1) & 1
                 if new_hi:

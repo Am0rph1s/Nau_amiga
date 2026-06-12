@@ -1,22 +1,8 @@
 #pragma once
 // ============================================================================
 // NAU DX AMIGA - Sprite/Bob graphics data
-// All bobs: 16x16, 1 bitplane (mask + data per plane), non-interleaved
-// Format per bob: [mask_row0..mask_row15][data_row0..data_row15] (2 bytes/row = 1 word)
-// Mask: 1=opaque, 0=transparent  Data: 1=pixel on, 0=off
-//
-// Colors via palette:
-//   Ship white body  -> color index 4 (plane pattern: body)
-//   Ship red detail  -> color index 5 (plane pattern: cockpit)
-//   Enemy basic      -> color index 16 (cyan)
-//   Enemy fast       -> color index 17 (lt cyan)
-//   Enemy heavy      -> color index 20 (grey)
-//   Enemy diver      -> color index 22 (green)
-//   Enemy bomber     -> color index 24 (white/bright)
-//   Boss             -> color index 26
-//   Shot player      -> color index 28 (yellow)
-//   Shot enemy       -> color index 29 (red)
-//   Explosion        -> color index 30
+// (Enemy sprite data lives in gfx_enemy_basic24.h / gfx_enemy_fast16.h
+//  since each enemy uses 2 bitplanes + an inverted polarity variant.)
 // ============================================================================
 
 // --- SHIP (16x16) - from nau_spectrum ship_strip_m[][0] (b0<<8|b1) -----------
@@ -38,66 +24,6 @@ static const UWORD g_ShipRed[16] = {
     0x0000, 0x0000, 0x0000, 0x0000,
     0x0000, 0x0000, 0x0000, 0x0000,
     0x0000, 0x0000, 0x0000, 0x0000,
-};
-
-// --- ENEMY BASIC (16x16) - from enemy_normal_strip_m[][0] -------------------
-static const UWORD g_EnemyBasicMask[12] = {
-    0x0000, 0x1F80, 0x3FC0, 0x6060,
-    0xC030, 0xE970, 0xBFD0, 0xFFF0,
-    0x6F60, 0x3FC0, 0x0F00, 0x0000,
-};
-static const UWORD g_EnemyBasicData[12] = {
-    0x0000, 0x1F80, 0x3FC0, 0x6060,
-    0xC030, 0xE970, 0xBFD0, 0xFFF0,
-    0x6F60, 0x3FC0, 0x0F00, 0x0000,
-};
-
-// --- ENEMY FAST (16x16) - from enemy_fast_strip_m[][0] ----------------------
-static const UWORD g_EnemyFastMask[12] = {
-    0x0000, 0x0F00, 0x1980, 0x34C0,
-    0x1F80, 0x3FC0, 0x6F60, 0x3FC0,
-    0x1680, 0x1F80, 0x0F00, 0x0000,
-};
-static const UWORD g_EnemyFastData[12] = {
-    0x0000, 0x0F00, 0x1980, 0x34C0,
-    0x1F80, 0x3FC0, 0x6F60, 0x3FC0,
-    0x1680, 0x1F80, 0x0F00, 0x0000,
-};
-
-// --- ENEMY HEAVY (16x16) - from enemy_heavy_strip_m[][0] --------------------
-static const UWORD g_EnemyHeavyMask[12] = {
-    0x0F00, 0x3FC0, 0x70E0, 0xE070,
-    0xF4F0, 0xBFD0, 0xBFD0, 0xEF70,
-    0xEF70, 0x7FE0, 0x3FC0, 0x1080,
-};
-static const UWORD g_EnemyHeavyData[12] = {
-    0x0F00, 0x3FC0, 0x70E0, 0xE070,
-    0xF4F0, 0xBFD0, 0xBFD0, 0xEF70,
-    0xEF70, 0x7FE0, 0x3FC0, 0x1080,
-};
-
-// --- ENEMY DIVER (16x16) - from enemy_diver_strip_m[][0] --------------------
-static const UWORD g_EnemyDiverMask[12] = {
-    0x0500, 0x0D00, 0x1F80, 0x30C0,
-    0x74E0, 0xFFF0, 0xFFF0, 0x1F80,
-    0xEF70, 0x70E0, 0x3FC0, 0x0F00,
-};
-static const UWORD g_EnemyDiverData[12] = {
-    0x0500, 0x0D00, 0x1F80, 0x30C0,
-    0x74E0, 0xFFF0, 0xFFF0, 0x1F80,
-    0xEF70, 0x70E0, 0x3FC0, 0x0F00,
-};
-
-// --- ENEMY BOMBER (16x16) - from enemy_bomber_strip_m[][0] ------------------
-static const UWORD g_EnemyBomberMask[12] = {
-    0x2040, 0x3FC0, 0x70E0, 0xE070,
-    0xE970, 0xBFD0, 0xFFF0, 0xDFB0,
-    0x7FE0, 0x2F40, 0x3FC0, 0x0900,
-};
-static const UWORD g_EnemyBomberData[12] = {
-    0x2040, 0x3FC0, 0x70E0, 0xE070,
-    0xE970, 0xBFD0, 0xFFF0, 0xDFB0,
-    0x7FE0, 0x2F40, 0x3FC0, 0x0900,
 };
 
 // --- BOSS (32x24) - larger, 2 words wide ------------------------------------
@@ -172,17 +98,3 @@ static const UWORD g_Exp3Data[16] = {
 // Lookup tables for drawing
 static const UWORD* const g_ExpMasks[4] = { g_Exp0Mask, g_Exp1Mask, g_Exp2Mask, g_Exp3Mask };
 static const UWORD* const g_ExpData[4]  = { g_Exp0Data, g_Exp1Data, g_Exp2Data, g_Exp3Data };
-
-static const UWORD* const g_EnemyMasks[5] = {
-    g_EnemyBasicMask, g_EnemyFastMask, g_EnemyHeavyMask,
-    g_EnemyDiverMask, g_EnemyBomberMask
-};
-static const UWORD* const g_EnemyDatas[5] = {
-    g_EnemyBasicData, g_EnemyFastData, g_EnemyHeavyData,
-    g_EnemyDiverData, g_EnemyBomberData
-};
-static const UWORD g_EnemyRows[5] = { 12, 12, 12, 12, 12 };
-
-// Color index per enemy type (into g_Palette)
-// PF2 colorMask: bit0->plane1, bit1->plane3. 1=dark,2=mid,3=bright
-static const UBYTE g_EnemyColor[5] = { 3, 3, 3, 2, 1 };
