@@ -1320,7 +1320,7 @@ static UWORD g_Palette[32] = {
     // PF2 (game sprites): slots 8-15
     0x0000,              //  8  PF2 transparent (shows PF1 behind)
     0x0FFF,              //  9  PF2 white (white enemy shots)
-    0x0111,              // 10  PF2 near-black (black enemy shots)
+    0x0F00,              // 10  PF2 red (black polarity shots, bright enough to see)
     0x0CCC,              // 11  PF2 light grey
     0x0FF0,              // 12  PF2 yellow (player shots)
     0x0212,              // 13  PF2 border dark

@@ -87,8 +87,8 @@
 #define ENEMYSHOT_SPEED_Y   5
 #define ENEMYSHOT_COOLDOWN  18
 #define ENEMYSHOT_STAGGER   5
-#define ENEMYSHOT_W         4
-#define ENEMYSHOT_H         4
+#define ENEMYSHOT_W         8
+#define ENEMYSHOT_H         6
 
 // --- Explosions -------------------------------------------------------------
 #define MAX_EXPLOSIONS      6

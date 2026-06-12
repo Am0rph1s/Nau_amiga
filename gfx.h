@@ -57,9 +57,17 @@ static const UWORD g_BossRedData[24*2] = {
 static const UWORD g_ShotMask[8]  = { 0x6000,0xF000,0xF000,0xF000, 0x6000,0x6000,0x6000,0x0000 };
 static const UWORD g_ShotData[8]  = { 0x6000,0xF000,0xF000,0xF000, 0x6000,0x6000,0x6000,0x0000 };
 
-// --- ENEMY SHOT (4x6) -------------------------------------------------------
-static const UWORD g_EShotMask[8] = { 0x0000,0x6000,0xF000,0xF000, 0x6000,0x0000,0x0000,0x0000 };
-static const UWORD g_EShotData[8] = { 0x0000,0x6000,0xF000,0xF000, 0x6000,0x0000,0x0000,0x0000 };
+// --- ENEMY SHOT (8x6 diamond) ------------------------------------------------
+// Wider shot than the player shot so it reads at a glance. Symmetric
+// around the word center: bits 11..14 set in the widest row.
+static const UWORD g_EShotMask[8] = {
+    0x0000, 0x07E0, 0x1FF0, 0x3FF8,
+    0x1FF0, 0x07E0, 0x0000, 0x0000
+};
+static const UWORD g_EShotData[8] = {
+    0x0000, 0x07E0, 0x1FF0, 0x3FF8,
+    0x1FF0, 0x07E0, 0x0000, 0x0000
+};
 
 // --- EXPLOSION frames (16x16) -----------------------------------------------
 static const UWORD g_Exp0Mask[16] = {
