@@ -87,8 +87,29 @@
 #define ENEMYSHOT_SPEED_Y   5
 #define ENEMYSHOT_COOLDOWN  18
 #define ENEMYSHOT_STAGGER   5
-#define ENEMYSHOT_W         8
-#define ENEMYSHOT_H         6
+#define ENEMYSHOT_W         10
+#define ENEMYSHOT_H         4
+
+// Absorption radius: shots of the same polarity within this distance from
+// the ship center are absorbed (Ikaruga-style). Must be >= the dome radius
+// (FORCEFIELD_R = 22) so the dome "catches" shots touching its edge.
+#define ABSORB_RADIUS       24
+
+// Chain/accumulator for absorbed shots. Each absorption adds 1; the
+// accumulator caps at CHAIN_MAX. The special attack (power shot or bomb)
+// consumes the accumulator in a future task.
+#define CHAIN_MAX           3
+
+// PF2 palette (BPL2 + BPL4 + BPL6, dual-playfield) — TOTS FIXOS:
+//   reg 9  = 0x0FFF white   — nau blanca, accent bala blanca
+//   reg 10 = 0x000  black   — contorn nau, accent bala negra
+//   reg 11 = 0xF00  red     — cos bala negra, dom pol B, detall nau pol B (BPL2+BPL4)
+//   reg 12 = 0x0CF  blue    — cos bala blanca, dom pol A, detall nau pol A (BPL6)
+//   reg 13 = 0x0212         — border dark
+//   reg 14 = 0x0756         — border mid
+//   reg 15 = 0x0434         — border light
+// La polaritat es gestiona renderitzant a plans diferents (no canviant paleta).
+
 
 // --- Explosions -------------------------------------------------------------
 #define MAX_EXPLOSIONS      6

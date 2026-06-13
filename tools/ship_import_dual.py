@@ -27,16 +27,22 @@ try:
 except ImportError:
     raise SystemExit("Cal Pillow: pip install Pillow")
 
-def color_to_lh(px):
+def color_to_planes(px):
+    """Classify pixel into 3 bitplanes:
+      plane0 -> BPL2 (PF2 bit 0, color 9):  white pixels
+      plane1 -> BPL6 (PF2 bit 2, color 12): colored pixels (purple, grey, red)
+      plane2 -> BPL4 (PF2 bit 1, color 10): dark/black pixels
+    This works for both polarities: white ship + coloured detail + dark outline,
+    or black ship + red detail + white accent.
+    """
     if len(px) == 4 and px[3] < 16:
-        return (0, 0)
-    r = px[0]
-    if r < 0x40:
-        return (0, 1)  # fosc -> hi (contorn)
-    elif r > 0xB0:
-        return (1, 0)  # blanc -> lo (cos)
-    else:
-        return (1, 1)  # gris clar -> lo+hi (interior)
+        return (0, 0, 0)
+    r, g, b = px[0], px[1], px[2]
+    if r > 200 and g > 200 and b > 200:
+        return (1, 0, 0)  # white -> plane0 (BPL2)
+    if r < 60 and g < 60 and b < 60:
+        return (0, 0, 1)  # dark -> plane2 (BPL4)
+    return (0, 1, 0)      # coloured -> plane1 (BPL6)
 
 def png_to_planes(path):
     img = Image.open(path).convert("RGBA")
@@ -44,25 +50,26 @@ def png_to_planes(path):
         raise SystemExit(f"{path}: mida {img.size}, esperada ({FRAME_W}, {FRAME_H})")
 
     mask_words  = [0] * (FRAME_H * N_WORDS)
-    plane0_words = [0] * (FRAME_H * N_WORDS)  # bit 0 de lo
-    plane1_words = [0] * (FRAME_H * N_WORDS)  # bit 1 de lo (no usat)
-    plane2_words = [0] * (FRAME_H * N_WORDS)  # bit 0 de hi
-    plane3_words = [0] * (FRAME_H * N_WORDS)  # bit 1 de hi (no usat)
+    plane0_words = [0] * (FRAME_H * N_WORDS)  # white -> BPL2
+    plane1_words = [0] * (FRAME_H * N_WORDS)  # coloured -> BPL6
+    plane2_words = [0] * (FRAME_H * N_WORDS)  # dark -> BPL4
+    plane3_words = [0] * (FRAME_H * N_WORDS)  # unused
 
     for y in range(FRAME_H):
         for word_i in range(N_WORDS):
             word_idx = y * N_WORDS + word_i
             for bit in range(16):
                 x = word_i * 16 + bit
-                lo, hi = color_to_lh(img.getpixel((x, y)))
+                p0, p1, p2 = color_to_planes(img.getpixel((x, y)))
                 bit_mask = 1 << (15 - bit)
-                if lo or hi:
+                if p0 or p1 or p2:
                     mask_words[word_idx] |= bit_mask
-                if lo:
+                if p0:
                     plane0_words[word_idx] |= bit_mask
-                if hi:
+                if p1:
+                    plane1_words[word_idx] |= bit_mask
+                if p2:
                     plane2_words[word_idx] |= bit_mask
-                # plane1 i plane3 = 0
     return mask_words, plane0_words, plane1_words, plane2_words, plane3_words
 
 def format_words(words, indent="    "):
@@ -81,31 +88,17 @@ b = png_to_planes(SRC_B)
 content = f"""#pragma once
 // Auto-generated from sprites/nau_fire_polarity_a.png (colorMode=0)
 // and sprites/nau_fire_polarity_B.png (colorMode=1).
-//   plane0 + plane1 -> "lo" (PF2 bit 0)
-//   plane2 + plane3 -> "hi" (PF2 bit 1)
+//
+// 3-plane mapping (white | coloured | dark):
+//   plane0 -> BPL2 (PF2 bit 0, color 9):  white pixels
+//   plane1 -> BPL6 (PF2 bit 2, color 12): coloured pixels (purple, grey, red)
+//   plane2 -> BPL4 (PF2 bit 1, color 10): dark/black pixels
+//   plane3 -> unused (zero)
 #define SHIP_W_WIDTH   {FRAME_W}
 #define SHIP_W_HEIGHT  {FRAME_H}
 #define SHIP_W_BPL     4
 
-// Amiga greyscale palette (14 entries, slot 0 = background black):
-static const UWORD SHIP_W_PALETTE[14] = {{
-    0x0000,  // [ 0] RGB(0, 0, 0)
-    0x0111,  // [ 1] RGB(24, 24, 24)
-    0x0222,  // [ 2] RGB(40, 40, 40)
-    0x0333,  // [ 3] RGB(56, 56, 56)
-    0x0444,  // [ 4] RGB(71, 71, 71)
-    0x0555,  // [ 5] RGB(86, 86, 86)
-    0x0666,  // [ 6] RGB(100, 100, 100)
-    0x0777,  // [ 7] RGB(113, 113, 113)
-    0x0777,  // [ 8] RGB(126, 126, 126)
-    0x0888,  // [ 9] RGB(140, 140, 140)
-    0x0999,  // [10] RGB(155, 155, 155)
-    0x0AAA,  // [11] RGB(171, 171, 171)
-    0x0BBB,  // [12] RGB(189, 189, 189)
-    0x0DDD  // [13] RGB(209, 209, 209)
-}};
-
-// === POLARITY A (colorMode=0, estat normal sense foc) ===
+// === POLARITY A (colorMode=0) ===
 static const UWORD SHIP_W_A_MASK[{FRAME_H*N_WORDS}] = {{
 {format_words(a[0])}
 }};
@@ -125,7 +118,7 @@ static const UWORD* const SHIP_W_A_PLANES[4] = {{
     SHIP_W_A_PLANE0, SHIP_W_A_PLANE1, SHIP_W_A_PLANE2, SHIP_W_A_PLANE3
 }};
 
-// === POLARITY B (colorMode=1, fire apretat) ===
+// === POLARITY B (colorMode=1) ===
 static const UWORD SHIP_W_B_MASK[{FRAME_H*N_WORDS}] = {{
 {format_words(b[0])}
 }};
@@ -144,14 +137,6 @@ static const UWORD SHIP_W_B_PLANE3[{FRAME_H*N_WORDS}] = {{
 static const UWORD* const SHIP_W_B_PLANES[4] = {{
     SHIP_W_B_PLANE0, SHIP_W_B_PLANE1, SHIP_W_B_PLANE2, SHIP_W_B_PLANE3
 }};
-
-// Backward compat: keep old names pointing to polarity A data.
-#define SHIP_W_MASK SHIP_W_A_MASK
-#define SHIP_W_PLANE0 SHIP_W_A_PLANE0
-#define SHIP_W_PLANE1 SHIP_W_A_PLANE1
-#define SHIP_W_PLANE2 SHIP_W_A_PLANE2
-#define SHIP_W_PLANE3 SHIP_W_A_PLANE3
-#define SHIP_W_PLANES SHIP_W_A_PLANES
 """
 
 OUT.write_text(content, encoding="ascii")

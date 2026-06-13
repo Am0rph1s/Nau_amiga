@@ -416,16 +416,37 @@ static void DrawBob32_2bpl(UBYTE* screen_mem,
         plo[base+1] = (UWORD)((plo[base+1] & ~mv1) | (lv1 & mv1));
         if (wx + 2 < ROW_BYTES / 2)
             plo[base+2] = (UWORD)((plo[base+2] & ~mv2) | (lv2 & mv2));
-        // Also clear plane 5 (PF2 bit 2) in mask area
-        UWORD* pl5 = (UWORD*)(screen_mem + 5 * PLANE_BYTES);
-        pl5[base]   &= ~mv0;
-        pl5[base+1] &= ~mv1;
-        if (wx + 2 < ROW_BYTES / 2)
-            pl5[base+2] &= ~mv2;
+        // Clear plane 5 (PF2 bit 2) in mask area — only if not a data plane
+        if (planeHi != 5 && planeLo != 5) {
+            UWORD* pl5 = (UWORD*)(screen_mem + 5 * PLANE_BYTES);
+            pl5[base]   &= ~mv0;
+            pl5[base+1] &= ~mv1;
+            if (wx + 2 < ROW_BYTES / 2)
+                pl5[base+2] &= ~mv2;
+        }
     }
 }
 
 // Draw 16px-wide bob with 2 independent data bitplanes (PF2 only)
+// OR body bits into BPL4 without clearing anything (for black bullets:
+// body on BPL2+BPL4 = reg 11 (per-pol: blue or red), accent stays BPL4-only = black).
+static void OrBPL4(UBYTE* screen_mem, const UWORD* data,
+                    short x, short y, UWORD rows) {
+    UWORD wx = (UWORD)(x >> 4);
+    UWORD sh = (UWORD)(x & 15);
+    UWORD* pl = (UWORD*)(screen_mem + 3 * PLANE_BYTES);
+    for (UWORD row = 0; row < rows; row++) {
+        UWORD w = data[row];
+        UWORD b0 = w >> sh;
+        UWORD b1 = sh ? (UWORD)(w << (16 - sh)) : 0;
+        UWORD ry = (UWORD)y + row;
+        UWORD base = ry * (ROW_BYTES / 2) + wx;
+        pl[base] |= b0;
+        if (wx + 1 < ROW_BYTES / 2)
+            pl[base+1] |= b1;
+    }
+}
+
 static void DrawBob16_2bpl(UBYTE* screen_mem,
                            const UWORD* mask, const UWORD* dataHi, const UWORD* dataLo,
                            short x, short y, UBYTE planeHi, UBYTE planeLo, UWORD rows) {
@@ -460,11 +481,13 @@ static void DrawBob16_2bpl(UBYTE* screen_mem,
         plo[base]   = (UWORD)((plo[base]   & ~mv0) | (lv0 & mv0));
         if (wx + 1 < ROW_BYTES / 2)
             plo[base+1] = (UWORD)((plo[base+1] & ~mv1) | (lv1 & mv1));
-        // Also clear plane 5 (PF2 bit 2) in mask area
-        UWORD* pl5 = (UWORD*)(screen_mem + 5 * PLANE_BYTES);
-        pl5[base]   &= ~mv0;
-        if (wx + 1 < ROW_BYTES / 2)
-            pl5[base+1] &= ~mv1;
+        // Clear plane 5 (PF2 bit 2) in mask area — only if not a data plane
+        if (planeHi != 5 && planeLo != 5) {
+            UWORD* pl5 = (UWORD*)(screen_mem + 5 * PLANE_BYTES);
+            pl5[base]   &= ~mv0;
+            if (wx + 1 < ROW_BYTES / 2)
+                pl5[base+1] &= ~mv1;
+        }
     }
 }
 
@@ -479,12 +502,10 @@ static void DrawPixel(UBYTE* screen_mem, short x, short y, UBYTE colorIdx) {
     if (colorIdx & 4) screen_mem[5 * PLANE_BYTES + off] |= bit;
 }
 
-// Draw ship (32x24) - dual-playfield: write to planes 1,3 only
-// Each polarity has its own 4-bitplane data; we pick the right one based
-// on colorMode and render with the standard 2-BPL merge (no swap):
-//   lo -> BPL2 (PF2 bit 0)
-//   hi -> BPL4 (PF2 bit 1)
-//   lo AND hi -> slot 11 (PF2 bit 0+1, light grey interior)
+// Draw ship (32x24) - dual-playfield
+// Pol A (colorMode=0): p0→BPL2(blanc), p1→BPL6(blau), p2→BPL4(negre)
+// Pol B (colorMode=1): p0→BPL2(blanc), p1→BPL2+BPL4(vermell via reg 11), p2→BPL4(negre)
+//   p1 OR'd a BPL2 i BPL4 perque no solapa amb p0/p2.
 static void DrawShipAnim(UBYTE* screen_mem, short x, short y, UBYTE frame, UBYTE colorMode) {
     (void)frame;
     if (x <= -32 || x >= SCREEN_W || y <= -24 || y >= SCREEN_H) return;
@@ -498,13 +519,13 @@ static void DrawShipAnim(UBYTE* screen_mem, short x, short y, UBYTE frame, UBYTE
     UWORD* pl1 = (UWORD*)(screen_mem + 1 * PLANE_BYTES);
     UWORD* pl3 = (UWORD*)(screen_mem + 3 * PLANE_BYTES);
     UWORD* pl5 = (UWORD*)(screen_mem + 5 * PLANE_BYTES);
-    // Pick the polarity-specific data tables
     const UWORD* mask    = (colorMode == 0) ? SHIP_W_A_MASK    : SHIP_W_B_MASK;
     const UWORD* const* planes = (colorMode == 0) ? SHIP_W_A_PLANES : SHIP_W_B_PLANES;
-    const UWORD* p0 = planes[0];
-    const UWORD* p1 = planes[1];
-    const UWORD* p2 = planes[2];
-    const UWORD* p3 = planes[3];
+    const UWORD* p0 = planes[0];  // white
+    const UWORD* p1 = planes[1];  // coloured
+    const UWORD* p2 = planes[2];  // dark
+    const UWORD* p3 = planes[3];  // unused
+    (void)p3;
     for (UWORD row = 0; row < rows; row++) {
         UWORD ri   = row + skip;
         UWORD m0   = mask[ri*2],   m1 = mask[ri*2+1];
@@ -513,31 +534,50 @@ static void DrawShipAnim(UBYTE* screen_mem, short x, short y, UBYTE frame, UBYTE
         UWORD mv2  = shift ? (UWORD)(m1 << (16-shift)) : 0;
         UWORD ry   = (UWORD)y + row;
         UWORD base = ry * (ROW_BYTES / 2) + wx;
-        UWORD lo0 = (UWORD)(p0[ri*2] | p1[ri*2]);
-        UWORD lo1 = (UWORD)(p0[ri*2+1] | p1[ri*2+1]);
-        UWORD hi0 = (UWORD)(p2[ri*2] | p3[ri*2]);
-        UWORD hi1 = (UWORD)(p2[ri*2+1] | p3[ri*2+1]);
-        UWORD lv0 = lo0 >> shift;
-        UWORD lv1 = shift ? (UWORD)((lo0 << (16-shift)) | (lo1 >> shift)) : lo1;
-        UWORD lv2 = shift ? (UWORD)(lo1 << (16-shift)) : 0;
-        UWORD hv0 = hi0 >> shift;
-        UWORD hv1 = shift ? (UWORD)((hi0 << (16-shift)) | (hi1 >> shift)) : hi1;
-        UWORD hv2 = shift ? (UWORD)(hi1 << (16-shift)) : 0;
-        // Always: lo -> BPL2, hi -> BPL4 (no swap). Each polarity has its
-        // own design encoded in the bitplanes, so the same render path works
-        // for both. pl5 cleared in the ship area to avoid leftover bits.
-        pl1[base]   = (UWORD)((pl1[base]   & ~mv0) | (lv0 & mv0));
-        pl1[base+1] = (UWORD)((pl1[base+1] & ~mv1) | (lv1 & mv1));
+        UWORD w0   = p0[ri*2],   w1 = p0[ri*2+1];    // white
+        UWORD m0d  = p1[ri*2],   m1d = p1[ri*2+1];   // colour
+        UWORD d0   = p2[ri*2],   d1 = p2[ri*2+1];    // dark
+        UWORD wv0 = w0 >> shift;
+        UWORD wv1 = shift ? (UWORD)((w0 << (16-shift)) | (w1 >> shift)) : w1;
+        UWORD wv2 = shift ? (UWORD)(w1 << (16-shift)) : 0;
+        UWORD mv0d = m0d >> shift;
+        UWORD mv1d = shift ? (UWORD)((m0d << (16-shift)) | (m1d >> shift)) : m1d;
+        UWORD mv2d = shift ? (UWORD)(m1d << (16-shift)) : 0;
+        UWORD dv0 = d0 >> shift;
+        UWORD dv1 = shift ? (UWORD)((d0 << (16-shift)) | (d1 >> shift)) : d1;
+        UWORD dv2 = shift ? (UWORD)(d1 << (16-shift)) : 0;
+        // p0 → BPL2
+        pl1[base]   = (UWORD)((pl1[base]   & ~mv0) | (wv0 & mv0));
+        pl1[base+1] = (UWORD)((pl1[base+1] & ~mv1) | (wv1 & mv1));
         if (wx + 2 < ROW_BYTES / 2)
-            pl1[base+2] = (UWORD)((pl1[base+2] & ~mv2) | (lv2 & mv2));
-        pl3[base]   = (UWORD)((pl3[base]   & ~mv0) | (hv0 & mv0));
-        pl3[base+1] = (UWORD)((pl3[base+1] & ~mv1) | (hv1 & mv1));
+            pl1[base+2] = (UWORD)((pl1[base+2] & ~mv2) | (wv2 & mv2));
+        // p2 → BPL4
+        pl3[base]   = (UWORD)((pl3[base]   & ~mv0) | (dv0 & mv0));
+        pl3[base+1] = (UWORD)((pl3[base+1] & ~mv1) | (dv1 & mv1));
         if (wx + 2 < ROW_BYTES / 2)
-            pl3[base+2] = (UWORD)((pl3[base+2] & ~mv2) | (hv2 & mv2));
-        pl5[base]   &= ~mv0;
-        pl5[base+1] &= ~mv1;
-        if (wx + 2 < ROW_BYTES / 2)
-            pl5[base+2] &= ~mv2;
+            pl3[base+2] = (UWORD)((pl3[base+2] & ~mv2) | (dv2 & mv2));
+        if (colorMode == 0) {
+            // Pol A: p1 → BPL6 (blau)
+            pl5[base]   = (UWORD)((pl5[base]   & ~mv0) | (mv0d & mv0));
+            pl5[base+1] = (UWORD)((pl5[base+1] & ~mv1) | (mv1d & mv1));
+            if (wx + 2 < ROW_BYTES / 2)
+                pl5[base+2] = (UWORD)((pl5[base+2] & ~mv2) | (mv2d & mv2));
+        } else {
+            // Pol B: p1 → BPL2+BPL4 (vermell via reg 11)
+            pl1[base]   |= mv0d & mv0;
+            pl1[base+1] |= mv1d & mv1;
+            if (wx + 2 < ROW_BYTES / 2)
+                pl1[base+2] |= mv2d & mv2;
+            pl3[base]   |= mv0d & mv0;
+            pl3[base+1] |= mv1d & mv1;
+            if (wx + 2 < ROW_BYTES / 2)
+                pl3[base+2] |= mv2d & mv2;
+            // Clear BPL6 (no stale data)
+            pl5[base]   &= ~mv0;
+            pl5[base+1] &= ~mv1;
+            if (wx + 2 < ROW_BYTES / 2)
+                pl5[base+2] &= ~mv2;
+        }
     }
 }
 
@@ -909,9 +949,6 @@ static const UWORD g_FFSweepSrc3[FORCEFIELD_H*3] = { // frame 3: wiper at x=44
     0x0000, 0x0000, 0x0000,
     0x0000, 0x0000, 0x0000,
     0x0000, 0x0000, 0x0000,
-    0x0000, 0x0000, 0x0000,
-    0x0000, 0x0000, 0x0000,
-    0x0000, 0x0000, 0x0000,
 };
 static const UWORD g_FFSweepDst3[FORCEFIELD_H*3] = { // frame 3
     0x0000, 0x0000, 0x0000,
@@ -1224,44 +1261,47 @@ static void DrawForceFieldMask(UBYTE* screen_mem, short x, short y,
 }
 
 // Draw the force field. Two modes:
-//   - Normal  (transition == 0): scrolling banded-dither bubble in BPL6
-//                                 (Sonic 1-style energy lines). Drawn BEFORE
-//                                 the ship so the ship shows on top.
-//   - Sweep   (transition > 0):  OPAQUE disc split by a vertical wiper,
-//                                 BPL4 = source (old polarity), BPL6 = dest
-//                                 (new polarity). Drawn AFTER the ship so the
-//                                 dome covers the ship. The wiper sweeps from
-//                                 left to right (sweepDir=0, going to black)
-//                                 or right to left (sweepDir=1, going to white).
+//   - Normal  (transition == 0): scrolling banded-dither bubble.
+//                                 Pol A: BPL6 (reg 12 = blue)
+//                                 Pol B: BPL2+BPL4 (reg 11 = red)
+//   - Sweep   (transition > 0):  OPAQUE disc split by a vertical wiper.
+//                                 white→black: source BPL6 (blue) sweeping out,
+//                                              dest BPL2+BPL4 (red) sweeping in.
+//                                 black→white: source BPL2+BPL4 (red) sweeping out,
+//                                              dest BPL6 (blue) sweeping in.
 static void DrawForceField(UBYTE* screen_mem, short shipX, short shipY,
-                           short pulse, short transition, short sweepDir) {
-    // Mask is 48x48 centered at (24,24). Ship center is (shipX+16, shipY+12),
-    // so draw the mask at (shipX-8, shipY-12).
+                           short pulse, short transition, short sweepDir, short polarity) {
     short mx = (short)(shipX - 8);
     short my = (short)(shipY - 12);
-    (void)pulse;  // reserved for future size cycling
+    (void)pulse;
 
     if (transition > 0) {
-        // Polarity sweep. transition counts down 4..1. phase = 0..3.
         short phase = 4 - transition;
         if (phase < 0) phase = 0;
         if (phase > 3) phase = 3;
-        // Forward (going to black): play frames 0,1,2,3. Reverse: 3,2,1,0.
         short idx = (sweepDir == 0) ? phase : (3 - phase);
-        // Forward: BPL4 = source (right of wiper), BPL6 = destination (left).
-        // Reverse: swap the BPL assignments so destination still ends up on
-        // the right and source on the left of the wiper.
+        // Paleta fixa: BPL6=blau, BPL2+BPL4=vermell.
+        // El wiper separa source (vella) i dest (nova).
         if (sweepDir == 0) {
-            DrawForceFieldMask(screen_mem, mx, my, g_FFSweepSrcSet[idx], 3); // BPL4
-            DrawForceFieldMask(screen_mem, mx, my, g_FFSweepDstSet[idx], 5); // BPL6
-        } else {
+            // white→black: old=blue(BPL6) sweeping out, new=red(BPL2+BPL4) sweeping in
             DrawForceFieldMask(screen_mem, mx, my, g_FFSweepSrcSet[idx], 5); // BPL6
             DrawForceFieldMask(screen_mem, mx, my, g_FFSweepDstSet[idx], 3); // BPL4
+            DrawForceFieldMask(screen_mem, mx, my, g_FFSweepDstSet[idx], 1); // BPL2
+        } else {
+            // black→white: old=red(BPL2+BPL4) sweeping out, new=blue(BPL6) sweeping in
+            DrawForceFieldMask(screen_mem, mx, my, g_FFSweepSrcSet[idx], 3); // BPL4
+            DrawForceFieldMask(screen_mem, mx, my, g_FFSweepSrcSet[idx], 1); // BPL2
+            DrawForceFieldMask(screen_mem, mx, my, g_FFSweepDstSet[idx], 5); // BPL6
         }
     } else {
-        // Normal scrolling bubble. Drawn before the ship.
+        // Normal scrolling dome — plane segons polaritat
         short scroll = (g_FrameCounter >> 3) & 3;
-        DrawForceFieldMask(screen_mem, mx, my, g_FFBubScrollSet[scroll], 5);  // BPL6 only
+        if (polarity == 0) {
+            DrawForceFieldMask(screen_mem, mx, my, g_FFBubScrollSet[scroll], 5);  // BPL6 = blue
+        } else {
+            DrawForceFieldMask(screen_mem, mx, my, g_FFBubScrollSet[scroll], 3);  // BPL4
+            DrawForceFieldMask(screen_mem, mx, my, g_FFBubScrollSet[scroll], 1);  // BPL2 → BPL2+BPL4 = red
+        }
     }
 }
 
@@ -1317,12 +1357,19 @@ static UWORD g_Palette[32] = {
     0x0000,              //  0
     0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,  //  1-6
     0x0000,              //  7
-    // PF2 (game sprites): slots 8-15
-    0x0000,              //  8  PF2 transparent (shows PF1 behind)
-    0x0FFF,              //  9  PF2 white (white enemy shots)
-    0x0F00,              // 10  PF2 red (black polarity shots, bright enough to see)
-    0x0CCC,              // 11  PF2 light grey
-    0x0FF0,              // 12  PF2 yellow (player shots)
+    // PF2 (game sprites): slots 8-15 — TOTS FIXOS (mai canvien)
+    //   reg 9  (BPL2):      0x0FFF white   — nau blanca, accent bala blanca
+    //   reg 10 (BPL4):      0x000  black   — contorn nau, accent bala negra
+    //   reg 11 (BPL2+BPL4): 0xF00  red     — cos bala negra, dom pol B, detall nau pol B
+    //   reg 12 (BPL6):      0x0CF  blue    — cos bala blanca, dom pol A, detall nau pol A
+    //   reg 13 (BPL2+BPL6): 0x0212         — border dark
+    //   reg 14 (BPL4+BPL6): 0x0756         — border mid
+    //   reg 15 (all):       0x0434         — border light
+    0x0000,              //  8  PF2 transparent
+    0x0FFF,              //  9  PF2 white
+    0x000,               // 10  PF2 black
+    0xF00,               // 11  PF2 red
+    0x0CF,               // 12  PF2 blue
     0x0212,              // 13  PF2 border dark
     0x0756,              // 14  PF2 border mid
     0x0434,              // 15  PF2 border light
@@ -1378,6 +1425,10 @@ static short      g_ForceFieldSweepDir   = 0;   // 0=white->black (wiper L->R), 
 __attribute__((externally_visible)) TEnemy     g_Enemies[MAX_ENEMIES];
 __attribute__((externally_visible)) TEnemyShot g_EnemyShots[MAX_ENEMY_SHOTS];
 __attribute__((externally_visible)) TExplosion g_Explosions[MAX_EXPLOSIONS];
+
+// Absorption chain: counts absorbed shots of the same polarity. Capped at
+// CHAIN_MAX. Displayed in the HUD as a row of small dots.
+static short g_AbsorbCount = 0;
 
 // Score / progress
 static unsigned short g_Score      = 0;
@@ -1494,6 +1545,7 @@ static void ResetGameSession() {
     for (int i = 0; i < MAX_ENEMIES;    i++) g_Enemies[i].active    = 0;
     for (int i = 0; i < MAX_ENEMY_SHOTS;i++) g_EnemyShots[i].active = 0;
     for (int i = 0; i < MAX_EXPLOSIONS; i++) g_Explosions[i].active = 0;
+    g_AbsorbCount = 0;
     g_WaveActive  = 0;
     g_WaveSpawned = 0;
     g_WaveKilled  = 0;
@@ -1554,6 +1606,22 @@ static void SpawnExplosion(short x, short y, short kind) {
             break;
         }
     }
+}
+
+// Ikaruga-style absorption: an enemy shot of the same polarity as the ship
+// is "caught" by the dome and the energy is banked into g_AbsorbCount
+// (capped at CHAIN_MAX). The shot is consumed (no bounce-back) and the
+// energy will be released later as a special attack (TBD: power shot or
+// bomb). A brief flash marks the absorption point.
+static void AbsorbEnemyShot(short enemyShotIdx) {
+    short ex = g_EnemyShots[enemyShotIdx].x;
+    short ey = g_EnemyShots[enemyShotIdx].y;
+    g_EnemyShots[enemyShotIdx].active = 0;
+
+    if (g_AbsorbCount < CHAIN_MAX) g_AbsorbCount++;
+
+    // Brief visual feedback: small light-grey flash at the absorption point.
+    SpawnExplosion(ex, ey, EXP_KIND_ENEMY);
 }
 
 // ============================================================================
@@ -1676,11 +1744,11 @@ static void RenderFrame(UBYTE* screen_mem) {
                 // OPAQUE dome on top so the ship is hidden by the wipe.
                 UBYTE animFrame = (UBYTE)((g_FrameCounter >> 2) & 3);
                 DrawShipAnim(screen_mem, g_ShipX, g_ShipY, animFrame, (UBYTE)g_ShipPolarity);
-                DrawForceField(screen_mem, g_ShipX, g_ShipY, 0, g_ForceFieldTransition, g_ForceFieldSweepDir);
+                DrawForceField(screen_mem, g_ShipX, g_ShipY, 0, g_ForceFieldTransition, g_ForceFieldSweepDir, g_ShipPolarity);
             } else {
-                // Normal: scrolling bubble (BPL6 annulus) before the ship.
+                // Normal: scrolling bubble before the ship.
                 short ffPulse = (short)((g_FrameCounter / 6) % 3);
-                DrawForceField(screen_mem, g_ShipX, g_ShipY, ffPulse, 0, 0);
+                DrawForceField(screen_mem, g_ShipX, g_ShipY, ffPulse, 0, 0, g_ShipPolarity);
                 UBYTE animFrame = (UBYTE)((g_FrameCounter >> 2) & 3);
                 DrawShipAnim(screen_mem, g_ShipX, g_ShipY, animFrame, (UBYTE)g_ShipPolarity);
             }
@@ -1707,22 +1775,52 @@ static void RenderFrame(UBYTE* screen_mem) {
         }
         for (int i = 0; i < MAX_SHOTS; i++) {
             if (!g_Shots[i].active) continue;
-            // variant 0 = white (slot 9, colorMask 0x01), variant 1 = black (slot 10, colorMask 0x02)
-            UBYTE pcm = (g_Shots[i].variant == 0) ? 0x01 : 0x02;
-            DrawBob16(screen_mem, g_ShotMask, g_ShotData, g_Shots[i].x, g_Shots[i].y, pcm, 8);
+            // Use shot's own variant (polarity at firing time), not current ship polarity.
+            // White (variant=0): accent BPL2 (reg 9=white), body BPL6 (reg 12=blue)
+            // Black (variant=1): accent BPL4 (reg 10=black), body BPL2+BPL4 (reg 11=red)
+            //   Body drawn to BPL2 via 2bpl, then ORed into BPL4 via OrBPL4.
+            if (g_Shots[i].variant == 0) {
+                DrawBob16_2bpl(screen_mem, g_ShotW_Mask, g_ShotW_DataHi, g_ShotW_DataLo,
+                               g_Shots[i].x, g_Shots[i].y, 1, 5, 8);
+            } else {
+                DrawBob16_2bpl(screen_mem, g_ShotB_Mask, g_ShotB_DataHi, g_ShotB_DataLo,
+                               g_Shots[i].x, g_Shots[i].y, 3, 1, 8);
+                OrBPL4(screen_mem, g_ShotB_DataLo,
+                       g_Shots[i].x, g_Shots[i].y, 8);
+            }
         }
         for (int i = 0; i < MAX_ENEMY_SHOTS; i++) {
             if (!g_EnemyShots[i].active) continue;
-            // white shot (variant=0) uses slot 9 (white), black shot (variant=1) uses slot 10 (near-black)
-            UBYTE cm = (g_EnemyShots[i].variant == 0) ? 0x01 : 0x02;
-            DrawBob16(screen_mem, g_EShotMask, g_EShotData,
-                      g_EnemyShots[i].x, g_EnemyShots[i].y, cm, 6);
+            if (g_EnemyShots[i].variant == 0) {
+                DrawBob16_2bpl(screen_mem, g_EShotW_Mask, g_EShotW_DataHi, g_EShotW_DataLo,
+                               g_EnemyShots[i].x, g_EnemyShots[i].y, 1, 5, 4);
+            } else {
+                DrawBob16_2bpl(screen_mem, g_EShotB_Mask, g_EShotB_DataHi, g_EShotB_DataLo,
+                               g_EnemyShots[i].x, g_EnemyShots[i].y, 3, 1, 4);
+                OrBPL4(screen_mem, g_EShotB_DataLo,
+                       g_EnemyShots[i].x, g_EnemyShots[i].y, 4);
+            }
         }
         for (int i = 0; i < MAX_EXPLOSIONS; i++) {
             TExplosion* ex = &g_Explosions[i];
             if (!ex->active) continue;
             UWORD fr = (UWORD)((ex->frame >> 1) & 3);
             DrawBob16(screen_mem, g_ExpMasks[fr], g_ExpData[fr], ex->x, ex->y, 0x03, 8);
+        }
+
+        // HUD: absorption chain display. 3 small dots in the top-right corner.
+        // Always white (reg 9 = 0x0FFF via BPL2), visible against black bg.
+        {
+            UBYTE dotColor = 0x01;  // BPL2 only = white
+            short baseX = HUD_X + 8;
+            short baseY = 8;
+            for (int i = 0; i < CHAIN_MAX; i++) {
+                short dx = (short)(baseX + i * 10);
+                UBYTE c = (i < g_AbsorbCount) ? dotColor : 0x00;
+                for (int py = 0; py < 4; py++)
+                    for (int px = 0; px < 4; px++)
+                        DrawPixel(screen_mem, (short)(dx + px), (short)(baseY + py), c);
+            }
         }
     }
 }
@@ -1920,7 +2018,11 @@ int main() {
                         g_ShipPolarity   = 0;
                         g_FireHoldFrames = 0;
                     }
-                    // Auto-fire on every cooldown cycle (existing behavior)
+                    // Auto-fire on every cooldown cycle (existing behavior).
+                    // Cadence power-up: each absorbed shot in g_AbsorbCount lowers
+                    // the cooldown by 1, so a full bar fires every frame (rafaga
+                    // continua) and an empty bar uses the default FIRE_COOLDOWN.
+                    // Firing consumes 1 from the bar — the bar empties as you shoot.
                     if (fireHeldNow && g_FireCooldown == 0) {
                         for (int i = 0; i < MAX_SHOTS; i++) {
                             if (!g_Shots[i].active) {
@@ -1928,7 +2030,13 @@ int main() {
                                 g_Shots[i].variant = (short)g_ShipPolarity;
                                 g_Shots[i].x = (short)(g_ShipX + SHIP_W/2 - SHOT_W/2);
                                 g_Shots[i].y = (short)(g_ShipY - SHOT_H);
-                                g_FireCooldown = FIRE_COOLDOWN;
+
+                                short cd = (short)(FIRE_COOLDOWN - g_AbsorbCount);
+                                if (cd < 0) cd = 0;
+                                g_FireCooldown = cd;
+
+                                if (g_AbsorbCount > 0) g_AbsorbCount--;
+
                                 break;
                             }
                         }
@@ -2047,12 +2155,31 @@ int main() {
             // --- Update enemy shots (68k ASM: just movement + off-screen) ---
             AsmUpdateEnemyShots();
 
-            // Enemy shot vs ship collision (only shots of opposite polarity damage the ship)
+            // Enemy shot vs ship / dome interaction:
+            //  1. Same polarity AND within ABSORB_RADIUS of ship center → ABSORB
+            //  2. Opposite polarity AND overlapping ship hitbox        → DAMAGE
             for (int i = 0; i < MAX_ENEMY_SHOTS; i++) {
                 if (!g_EnemyShots[i].active) continue;
-                if (!g_ShipExploding && g_EnemyShots[i].variant != g_ShipPolarity) {
-                    short sx = g_EnemyShots[i].x;
-                    short sy = g_EnemyShots[i].y;
+                if (g_ShipExploding) continue;
+
+                short sx = g_EnemyShots[i].x;
+                short sy = g_EnemyShots[i].y;
+
+                // Absorption check (same polarity only)
+                if (g_EnemyShots[i].variant == g_ShipPolarity) {
+                    short shipCX = (short)(g_ShipX + SHIP_W/2);
+                    short shipCY = (short)(g_ShipY + SHIP_H/2);
+                    short dx = (short)((sx + ENEMYSHOT_W/2) - shipCX);
+                    short dy = (short)((sy + ENEMYSHOT_H/2) - shipCY);
+                    long dist2 = (long)dx*dx + (long)dy*dy;
+                    if (dist2 <= (long)ABSORB_RADIUS * (long)ABSORB_RADIUS) {
+                        AbsorbEnemyShot(i);
+                        continue;
+                    }
+                }
+
+                // Damage check (opposite polarity only, AABB on ship hitbox)
+                if (g_EnemyShots[i].variant != g_ShipPolarity) {
                     if (sx + ENEMYSHOT_W > g_ShipX + SHIP_HIT_OX &&
                         sx               < g_ShipX + SHIP_HIT_OX + SHIP_HIT_W &&
                         sy + ENEMYSHOT_H > g_ShipY + SHIP_HIT_OY &&
@@ -2076,36 +2203,13 @@ int main() {
             if (g_GameState == GS_PLAYING && g_Level > ENDGAME_FINAL_LEVEL)
                 g_GameState = GS_WIN;
 
-            // --- Update force field colors (BPL6 = g_Palette[12], BPL4 = g_Palette[10]) ---
-            // The dome is drawn into BPL6 (annulus or sweep destination) and
-            // BPL4 (sweep source). Both come from g_Palette, reloaded by the
-            // Copper every frame in BuildCopperListEx. (Writing custom->color[]
-            // directly would be silently overwritten by the Copper.)
-            //
-            // Amiga colors are 0xRGB (4 bits each):
-            //   0x0CF = light blue, 0x0FF = cyan, 0xA00 = dark red, 0xF00 = red.
+            // --- Palette: TOT FIX (mai es canvia) ---
+            //   La polaritat es gestiona renderitzant a plans diferents,
+            //   no canviant la paleta.
             if (g_ShipExploding) {
-                g_Palette[10] = 0x000;
-                g_Palette[12] = 0x000;
-            } else if (g_ForceFieldTransition > 0) {
-                // Polarity sweep: split-color dome (BPL4=source, BPL6=dest)
-                if (g_ForceFieldSweepDir == 0) {
-                    // white->black: blue sweeps out, red sweeps in from the left
-                    g_Palette[10] = 0x0CF;  // BPL4: source = light blue
-                    g_Palette[12] = 0xF00;  // BPL6: destination = red
-                } else {
-                    // black->white: red sweeps out, blue sweeps in from the right
-                    g_Palette[10] = 0xA00;  // BPL4: source = dark red
-                    g_Palette[12] = 0x0CF;  // BPL6: destination = light blue
-                }
+                g_Palette[12] = 0x000;  // dome off during explosion
             } else {
-                // Normal scrolling bubble: single color (no pulse).
-                g_Palette[10] = 0x0111;  // BPL4: keep player-shot near-black
-                if (g_ShipPolarity == 0) {
-                    g_Palette[12] = 0x0CF;  // light blue (white polarity)
-                } else {
-                    g_Palette[12] = 0xA00;  // dark red (black polarity)
-                }
+                g_Palette[12] = 0x0CF;  // restore blue for normal gameplay
             }
 
         } else if (g_GameState == GS_GAMEOVER || g_GameState == GS_WIN) {

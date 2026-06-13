@@ -139,6 +139,11 @@ AsmUpdateExplosions:
 | void AsmEnemyFire(void)
 | For each active enemy: if (g_FrameCounter + i*7) % 30 == 0,
 | spawn an enemy shot at (e->x + ENEMY_W/2, e->y + ENEMY_H) with e->variant.
+|
+| Modulo computed by repeated subtraction (subq + dbra) instead of divs.
+| divs.w has the quotient/remainder split (lo=quotient, hi=remainder)
+| which is error-prone near zero; the sub loop is 100% reliable.
+| Max iterations: 2185 (any 16-bit value / 30 fits in 2185 subtractions).
 | ============================================================
         .global AsmEnemyFire
 AsmEnemyFire:
@@ -149,14 +154,28 @@ AsmEnemyFire:
         tst.w   TENEMY_ACTIVE(a0)
         beq.s   .aef_next
 
-        | (g_FrameCounter + i*7) % 30 == 0
+        | Compute d2 = (g_FrameCounter + i*7) as a 16-bit value
+        | (d2 high word stays 0 because i*7 is in 0..35, always positive)
         move.w  d1,d2
         lsl.w   #3,d2
         sub.w   d1,d2
         add.w   g_FrameCounter,d2
-        divs    #30,d2           | M68K divs: lo=quotient, hi=remainder
-        swap    d2               | move remainder to lo
-        tst.w   d2               | test lo (now remainder)
+
+        | Compute d2 = d2 mod 30 by subtracting 30 until d2 < 30.
+        | d3 is the loop counter: starts at 2185 (max 16-bit value / 30 + slack).
+        | If the subi borrows (carry clear, d2 went negative), add 30 back
+        | to restore the remainder and we're done.
+        move.w  #2185,d3
+.aef_mod:
+        subi.w  #30,d2
+        bcc.s   .aef_mod_cont
+        addi.w  #30,d2           | d2 went < 0, restore remainder
+        bra.s   .aef_mod_done
+.aef_mod_cont:
+        dbra    d3,.aef_mod
+.aef_mod_done:
+        | d2 is now the remainder in [0, 29]
+        tst.w   d2
         bne.s   .aef_next
 
         | Spawn enemy shot: find first inactive slot

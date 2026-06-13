@@ -854,6 +854,10 @@ DrawBob16d2Asm:
         cmpi.w  #256,d0
         bgt     .db162_fail
 
+        | Save plane numbers into d7/d6 (x/y no longer needed)
+        move.w  d5,d7                    | d7 = planeHi
+        move.w  d4,d6                    | d6 = planeLo
+
         | dbra counter
         subq.w  #1,d3
         | Row increment
@@ -878,10 +882,15 @@ DrawBob16d2Asm:
         and.w   d0,d5
         or.w    d5,(a1,d1.w)
 
-        | Clear plane5 in mask area
+        | Clear plane5 in mask area — skip when plane5 is a data plane
+        cmpi.w  #5,d7                    | d7 = planeHi
+        beq     .db162_clr_skip
+        cmpi.w  #5,d6                    | d6 = planeLo
+        beq     .db162_clr_skip
         move.w  d0,d4
         not.w   d4
         and.w   d4,(a6,d1.w)
+.db162_clr_skip:
 
         | Next row
         add.w   d2,d1
