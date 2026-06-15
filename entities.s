@@ -44,10 +44,10 @@
         .equ    ENEMYSHOT_SPEED_Y, 5
         .equ    ENEMY_W_HALF,     12
         .equ    ENEMY_H,         24
-        .equ    MAX_SHOTS,         4
-        .equ    MAX_ENEMIES,       6
-        .equ    MAX_ENEMY_SHOTS,  12
-        .equ    MAX_EXPLOSIONS,    6
+.equ    MAX_SHOTS,         24
+.equ    MAX_ENEMIES,       12
+.equ    MAX_ENEMY_SHOTS,  32
+.equ    MAX_EXPLOSIONS,    12
         .equ    EXP_FRAMES,        4
         .equ    EXP_FRAMES_TOTAL, 16
 

@@ -12,6 +12,7 @@ kickstart 1.3+.
 
 ## Status
 
+- **Requires 1 MB RAM** (512 KB chip + 512 KB slow/fast).
 - Engine compiles with `m68k-amiga-elf-gcc -Ofast -flto -fwhole-program`.
 - Builds to `out/nau_dx.exe` (Amiga Hunk executable).
 - Force field (banded-dither bubble + polarity-sweep transition) renders.
@@ -20,6 +21,8 @@ kickstart 1.3+.
 - Collision detection (shot-vs-enemy, enemy-vs-ship, shot-vs-ship) works.
 - **5 entity update loops moved to 68k ASM** (`entities.s`).
 - Wave/level progression, scoring, extra life, game-over screen.
+- Self-relocation to Fast RAM removed — code runs directly from Chip RAM
+  (no reubicació runtime, programa més petit i simple).
 
 ## Build & Toolchain
 
@@ -322,14 +325,17 @@ check, `adda.w #N,a0` for the next-element stride.
 
 ### Phase 1: Polish current gameplay
 - [ ] **Dual shot** (Ikaruga-style): the ship fires 2 shots, one per
-  wing, straight (not angled). Reuse the same `g_ShotMask`. Increase
-  `MAX_SHOTS` to 16-24 to host the extra shots.
+  wing, straight (not angled). Reuse the same `g_ShotMask`.
 - [ ] **Faster fire cadence**: reduce `FIRE_COOLDOWN` from 3 to 1-2.
 - [ ] **Polarity absorption** (Ikaruga-style): when an enemy shot has
   the SAME polarity as the ship and is close, the ship absorbs it.
   The absorbed shot becomes a player shot added to the pool. This
   causes the screen to fill with shots quickly when polarity is right.
-- [ ] **MAX_SHOTS increased** (4 → 16-24) to host absorbed shots.
+- [x] **MAX_SHOTS increased** (4 → 24) to host absorbed shots.
+- [x] **MAX_ENEMIES** (6 → 12), **MAX_ENEMY_SHOTS** (12 → 32),
+  **MAX_EXPLOSIONS** (6 → 12).
+- [x] **Removed relocation code**: game now requires 1 MB RAM directly,
+  no runtime self-relocation. Simpler, smaller binary.
 - [ ] **Absorption visual feedback**: particles/glow on absorption,
   color matching the polarity.
 

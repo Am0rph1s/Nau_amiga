@@ -2,7 +2,8 @@
 
 // ============================================================================
 // NAU DX AMIGA - Constants & Data Structures
-// Amiga 500 / OCS - 320x256 lowres, 5 bitplanes (32 colors)
+// Amiga 500 OCS - 320x256 lowres, 6 bitplanes (dual-playfield 3+3)
+// Requires 1 MB RAM (512 KB chip + 512 KB slow/fast)
 // ============================================================================
 
 // --- Screen layout ----------------------------------------------------------
@@ -37,45 +38,27 @@
 #define SHIP_HIT_W      (SHIP_W - 12)
 #define SHIP_HIT_H      (SHIP_H - 12)
 
-// --- NEW: Xenon 2 style ship (32x24) ----------------------------------------
-#define SHIP_NEW_W      32
-#define SHIP_NEW_H      24
-#define SHIP_NEW_WW     2       // width in words
-
-// --- NEW: Multi-size enemies (Xenon 2 style) -------------------------------
-#define ENEMY_SMALL_W   16
-#define ENEMY_SMALL_H   16
-#define ENEMY_MEDIUM_W  24
-#define ENEMY_MEDIUM_H  24
-#define ENEMY_LARGE_W   32
-#define ENEMY_LARGE_H   32
-
 // --- Player shots -----------------------------------------------------------
-#define MAX_SHOTS       4
+#define MAX_SHOTS       24
 #define SHOT_SPEED      7
 #define SHOT_W          4
-#define SHOT_H          8
+#define SHOT_H          16
 #define FIRE_COOLDOWN   3
-#define POLARITY_HOLD_FRAMES  8  // frames of holding fire to switch to black polarity
+#define POLARITY_HOLD_FRAMES  4  // frames of holding fire to switch polarity
 
 // --- Enemy types ------------------------------------------------------------
 #define ENEMY_TYPE_BASIC    0
 #define ENEMY_TYPE_FAST     1
-#define ENEMY_TYPE_BOSS     5
 
 #define ENEMY_SPEED_BASIC   3
 #define ENEMY_SPEED_FAST    4
-#define ENEMY_SPEED_BOSS    2
 
 #define ENEMY_SCORE_BASIC   10
 #define ENEMY_SCORE_FAST    20
-#define ENEMY_SCORE_BOSS    1500
 
 #define ENEMY_W             24
 #define ENEMY_H             24
-#define ENEMY_BOSS_W        32
-#define ENEMY_BOSS_H        24
-#define MAX_ENEMIES         6
+#define MAX_ENEMIES         12
 
 // --- Movement patterns ------------------------------------------------------
 #define PATT_STRAIGHT   0
@@ -83,7 +66,7 @@
 #define PATT_DIAGONAL   2
 
 // --- Enemy shots ------------------------------------------------------------
-#define MAX_ENEMY_SHOTS     12
+#define MAX_ENEMY_SHOTS     32
 #define ENEMYSHOT_SPEED_Y   5
 #define ENEMYSHOT_COOLDOWN  18
 #define ENEMYSHOT_STAGGER   5
@@ -112,14 +95,13 @@
 
 
 // --- Explosions -------------------------------------------------------------
-#define MAX_EXPLOSIONS      6
+#define MAX_EXPLOSIONS      12
 #define EXP_FRAMES          4
 #define EXP_KIND_ENEMY      0
 #define EXP_KIND_SHIP       1
 #define EXP_KIND_BOSS       2
 
 // --- Wave system ------------------------------------------------------------
-#define WAVE_PLAN_MAX       8
 #define SPAWN_FIRST_DELAY   4
 #define SERIAL_DELAY        8
 #define ENDGAME_FINAL_LEVEL 25
@@ -129,13 +111,6 @@
 #define LMASK_FAST      (1<<1)
 #define LCFG_F_BOSS1    1
 #define LCFG_F_BOSS2    2
-
-// --- Boss -------------------------------------------------------------------
-#define BOSS_HP_BASE        15
-#define BOSS_HP_PER_TIER    5
-#define BOSS_HOLD_Y         40
-#define BOSS_Y_OSC          20
-#define BOSS_TIERS_MAX      5
 
 // --- Starfield --------------------------------------------------------------
 #define N_STARS_1       10  // slow  - dim
@@ -148,16 +123,8 @@
 #define GS_GAMEOVER     2
 #define GS_WIN          3
 
-#define TS_MENU         0
-#define TS_HISCORE      1
-#define TS_HELP         2
-#define TS_ATTRACT      3
-
 // --- Respawn ----------------------------------------------------------------
 #define SHIP_EXPL_TIMER     12
-
-// --- Biomes -----------------------------------------------------------------
-#define BIOME_COUNT     5
 
 // --- HiScore ----------------------------------------------------------------
 #define HISCORE_COUNT   3

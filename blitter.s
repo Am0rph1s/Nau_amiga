@@ -20,147 +20,6 @@
 | Clobbers d0.
 | ============================================================
         .global WaitBlitter
-WaitBlitter:
-        move.w  DMACONR+CUSTOM,d0
-        btst    #14,d0
-        bne.s   WaitBlitter
-        move.w  DMACONR+CUSTOM,d0
-        btst    #14,d0
-        bne.s   WaitBlitter
-        rts
-
-        | ============================================================
-        | void BlitterClear(void* mem, ULONG bytes)
-        | Clears `bytes` bytes to zero using the Blitter (D-channel).
-        | Non-blocking: fires and returns immediately.
-        | Call WaitBlitter() before accessing the cleared memory.
-        |
-        | Stack args (GCC m68k C calling convention):
-        |   sp+4  = mem   (WORD-aligned pointer)
-        |   sp+8  = bytes (must be multiple of 2)
-        |
-        | BLTSIZE: bits[15:6]=vsize (lines-1), bits[5:0]=hsize (words-1).
-        | Max 64 words per line (hsize=6 bits), 1024 lines (vsize=10 bits).
-        | bytes should be a multiple of 128 for exact fill.
-        | Screen buffer = 320/8*256*5 = 51200 bytes = 25600 words
-        | -> 400 lines of 64 words: BLTSIZE = (399<<6) | 63 = 25599
-        | ============================================================
-        .global BlitterClear
-BlitterClear:
-        movem.l d0-d2/a0-a1,-(sp)
-
-        move.l  24(sp),a0               | a0 = mem  (5 regs*4 + ret addr = 24)
-        move.l  28(sp),d0               | d0 = bytes
-
-        lsr.l   #1,d0                   | d0 = total words
-        beq     .bc_done                | nothing to clear
-
-        lea     CUSTOM,a1
-
-        | words_per_line = min(d0, 64)
-        move.w  d0,d2
-        cmpi.w  #64,d2
-        bls.s   .bc_wpl_ok
-
-        move.w  #64,d2                  | words_per_line = 64
-
-        | lines = (total_words + 63) / 64
-        move.l  d0,d1
-        addi.l  #63,d1
-        lsr.l   #6,d1                   | d1 = lines
-        bra.s   .bc_build
-
-.bc_wpl_ok:
-        moveq   #1,d1                   | 1 line
-
-.bc_build:
-        | BLTSIZE = ((lines-1) << 6) | (words_per_line - 1)
-        subq.w  #1,d2                   | hsize = wpl - 1
-        subq.w  #1,d1                   | vsize = lines - 1
-        lsl.w   #6,d1
-        or.w    d2,d1                   | d1 = BLTSIZE
-
-        | Wait for any previous blit (word read, not byte)
-.bc_wait:
-        move.w  DMACONR(a1),d0
-        btst    #14,d0
-        bne.s   .bc_wait
-        move.w  DMACONR(a1),d0
-        btst    #14,d0
-        bne.s   .bc_wait
-
-        | Setup blitter: D-only, minterm 0x00 = zero fill
-        | BLTCON0 bit 8 (0x0100) = USED (D-channel enable); LF bits 7-0 = 0 -> output zeros
-        move.w  #0x0100,BLTCON0(a1)     | USED=1, LF=0 -> writes zeros
-        move.w  #0x0000,BLTCON1(a1)
-        move.w  #0xffff,BLTAFWM(a1)
-        move.w  #0xffff,BLTALWM(a1)
-        move.w  #0,BLTDMOD(a1)          | contiguous
-        | Write destination pointer as separate high/low words (OCS safe)
-        move.l  a0,d0                   | copy addr to d0 for swap
-        swap    d0                      | d0 = low:high
-        move.w  d0,BLTDPTH(a1)          | write original HIGH word to BLTDPTH
-        swap    d0                      | d0 = high:low (restored)
-        move.w  d0,BLTDPTH+2(a1)        | write original LOW word to BLTDPTL (latch)
-        move.w  d1,BLTSIZE(a1)          | fire! writing BLTSIZE starts the blit
-
-.bc_done:
-        movem.l (sp)+,d0-d2/a0-a1
-        rts
-
-| ============================================================
-| void BlitterClearArea(void* addr, int w, int h, int dmod)
-| Clears a rectangular area (w words x h lines) via Blitter D-channel.
-| addr: word-aligned start address (byte pointer OK, but must be even)
-| w: width in words (1-64)
-| h: height in lines (1-1024)
-| dmod: destination modulo in bytes (e.g. 12 for row-skip of 6 words)
-| Non-blocking: fires and returns.
-| Call WaitBlitter() before accessing the cleared memory.
-| ============================================================
-        .global BlitterClearArea
-BlitterClearArea:
-        movem.l d0-d2/a0-a1,-(sp)
-
-        move.l  24(sp),a0               | a0 = addr
-        move.l  28(sp),d0               | d0 = w (low word = value)
-        move.l  32(sp),d1               | d1 = h
-        move.l  36(sp),d2               | d2 = dmod
-
-        | BLTSIZE = ((h-1) << 6) | (w-1)
-        subq.w  #1,d0                   | w-1
-        subq.w  #1,d1                   | h-1
-        lsl.w   #6,d1
-        or.w    d0,d1                   | d1 = BLTSIZE
-
-        lea     CUSTOM,a1
-
-.bca_wait:
-        move.w  DMACONR(a1),d0
-        btst    #14,d0
-        bne.s   .bca_wait
-        move.w  DMACONR(a1),d0
-        btst    #14,d0
-        bne.s   .bca_wait
-
-        move.w  #0x0100,BLTCON0(a1)     | USED=1 (bit8), LF=0 -> zeros
-        move.w  #0x0000,BLTCON1(a1)
-        move.w  #0xffff,BLTAFWM(a1)
-        move.w  #0xffff,BLTALWM(a1)
-        move.w  d2,BLTDMOD(a1)          | modulo per line
-        | Write destination pointer as separate high/low words (OCS safe)
-        | BLTDPTH ($054) = high 16 bits, BLTDPTL ($056) = low 16 bits
-        | swap only works on data registers (Dx), not address registers (Ax)
-        move.l  a0,d0                   | copy addr to d0 for swap
-        swap    d0                      | d0 = low:high
-        move.w  d0,BLTDPTH(a1)          | write original HIGH word to BLTDPTH
-        swap    d0                      | d0 = high:low (restored)
-        move.w  d0,BLTDPTH+2(a1)        | write original LOW word to BLTDPTL (latch)
-        move.w  d1,BLTSIZE(a1)          | fire!
-
-        movem.l (sp)+,d0-d2/a0-a1
-        rts
-
         .global ClearGameAreaAsm
 ClearGameAreaAsm:
 | Clear planes 1,3,5 (PF2) — skip border bytes 0-7 and 32-39 (DrawBorder overwrites them)
@@ -813,7 +672,8 @@ DrawBob16d2Asm:
         | Fast-path checks
         tst.w   d3
         beq     .db162_fail
-        btst    #0,d7
+        move.w  d7,d0
+        andi.w  #15,d0
         bne     .db162_fail
         cmpi.w  #-16,d7
         ble     .db162_fail

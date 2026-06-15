@@ -12,7 +12,6 @@
 
 #include "nau_dx.h"
 #include "gfx.h"
-#include "gfx_ship_anim.h"
 #include "gfx_ship_white.h"
 #include "blitter.h"
 #include "gfx_enemy_basic24.h"
@@ -329,49 +328,6 @@ static void DrawBob16(UBYTE* screen_mem,
     }
 }
 
-// Draw 32px bob on PF2 only (planes 1,3,5)
-// colorMask: bit 0 -> plane 1, bit 1 -> plane 3, bit 2 -> plane 5
-static void DrawBob32(UBYTE* screen_mem,
-                      const UWORD* mask, const UWORD* data,
-                      short x, short y, UBYTE colorMask) {
-    if (x <= -32 || x >= SCREEN_W || y <= -24 || y >= SCREEN_H) return;
-    UWORD shift = (UWORD)(x & 15);
-    UWORD rows  = 24;
-    const UWORD* m = mask;
-    const UWORD* d = data;
-    if (y < 0) { m += (UWORD)((-y)*2); d += (UWORD)((-y)*2); rows = (UWORD)(24+y); y = 0; }
-    if (y + (short)rows > SCREEN_H) rows = (UWORD)(SCREEN_H - y);
-    if (rows == 0) return;
-    UWORD wx = (UWORD)(x < 0 ? 0 : x) >> 4;
-    static const UBYTE pf2_planes[3] = { 1, 3, 5 };
-    for (UWORD row = 0; row < rows; row++) {
-        UWORD m0 = m[row*2],   m1 = m[row*2+1];
-        UWORD d0 = d[row*2],   d1 = d[row*2+1];
-        UWORD mv0 = m0 >> shift;
-        UWORD mv1 = shift ? (UWORD)((m0 << (16-shift)) | (m1 >> shift)) : m1;
-        UWORD mv2 = shift ? (UWORD)(m1 << (16-shift)) : 0;
-        UWORD dv0 = d0 >> shift;
-        UWORD dv1 = shift ? (UWORD)((d0 << (16-shift)) | (d1 >> shift)) : d1;
-        UWORD dv2 = shift ? (UWORD)(d1 << (16-shift)) : 0;
-        UWORD ry   = (UWORD)y + row;
-        UWORD base = ry * (ROW_BYTES / 2) + wx;
-        for (int i = 0; i < 3; i++) {
-            UWORD* plane = (UWORD*)(screen_mem + pf2_planes[i] * PLANE_BYTES);
-            if (colorMask & (1 << i)) {
-                plane[base]   = (UWORD)((plane[base]   & ~mv0) | (dv0 & mv0));
-                plane[base+1] = (UWORD)((plane[base+1] & ~mv1) | (dv1 & mv1));
-                if (wx + 2 < ROW_BYTES / 2)
-                    plane[base+2] = (UWORD)((plane[base+2] & ~mv2) | (dv2 & mv2));
-            } else {
-                plane[base]   &= ~mv0;
-                plane[base+1] &= ~mv1;
-                if (wx + 2 < ROW_BYTES / 2)
-                    plane[base+2] &= ~mv2;
-            }
-        }
-    }
-}
-
 // Draw 32px-wide bob with 2 independent data bitplanes (for multi-tone sprites)
 // planeHi/planeLo: which bitplane indices carry the hi/lo data respectively
 static void DrawBob32_2bpl(UBYTE* screen_mem,
@@ -506,8 +462,7 @@ static void DrawPixel(UBYTE* screen_mem, short x, short y, UBYTE colorIdx) {
 // Pol A (colorMode=0): p0→BPL2(blanc), p1→BPL6(blau), p2→BPL4(negre)
 // Pol B (colorMode=1): p0→BPL2(blanc), p1→BPL2+BPL4(vermell via reg 11), p2→BPL4(negre)
 //   p1 OR'd a BPL2 i BPL4 perque no solapa amb p0/p2.
-static void DrawShipAnim(UBYTE* screen_mem, short x, short y, UBYTE frame, UBYTE colorMode) {
-    (void)frame;
+static void DrawShipAnim(UBYTE* screen_mem, short x, short y, UBYTE colorMode) {
     if (x <= -32 || x >= SCREEN_W || y <= -24 || y >= SCREEN_H) return;
     UWORD shift = (UWORD)(x & 15);
     UWORD rows  = SHIP_W_HEIGHT;
@@ -524,8 +479,6 @@ static void DrawShipAnim(UBYTE* screen_mem, short x, short y, UBYTE frame, UBYTE
     const UWORD* p0 = planes[0];  // white
     const UWORD* p1 = planes[1];  // coloured
     const UWORD* p2 = planes[2];  // dark
-    const UWORD* p3 = planes[3];  // unused
-    (void)p3;
     for (UWORD row = 0; row < rows; row++) {
         UWORD ri   = row + skip;
         UWORD m0   = mask[ri*2],   m1 = mask[ri*2+1];
@@ -1270,10 +1223,9 @@ static void DrawForceFieldMask(UBYTE* screen_mem, short x, short y,
 //                                 black→white: source BPL2+BPL4 (red) sweeping out,
 //                                              dest BPL6 (blue) sweeping in.
 static void DrawForceField(UBYTE* screen_mem, short shipX, short shipY,
-                           short pulse, short transition, short sweepDir, short polarity) {
+                           short transition, short sweepDir, short polarity) {
     short mx = (short)(shipX - 8);
     short my = (short)(shipY - 12);
-    (void)pulse;
 
     if (transition > 0) {
         short phase = 4 - transition;
@@ -1396,8 +1348,6 @@ static UWORD g_Palette[32] = {
 // ============================================================================
 
 static short g_GameState  = GS_PLAYING;
-static short g_TitleMode  = TS_MENU;
-static short g_CurrentBiome = 0;
 static short g_StarsEnabled = 0;  // 0=planet mode (no stars), 1=space mode
 static short g_BGScrollY  = 0;    // tilemap vertical scroll offset
 static short g_BorderScrollY = 0; // foreground border scroll
@@ -1413,6 +1363,7 @@ static short      g_FireCooldown     = 0;
 // Polarity: 0 = white (default), 1 = black (when fire is held)
 static short      g_ShipPolarity     = 0;
 static short      g_FireHoldFrames   = 0;
+static short      g_FireWasPressed   = 0;
 
 // Force field: rendered as a 1-bit BPL6 blit (rectangular ring around the ship).
 // In dual-playfield mode OCS hardware sprites are drawn BEHIND both playfields,
@@ -1444,12 +1395,12 @@ __attribute__((externally_visible)) short g_WaveKilled   = 0;
 static short g_SpawnTimer   = SPAWN_FIRST_DELAY;
 
 // Starfield
-static TStar g_Stars1[N_STARS_1];
-static TStar g_Stars2[N_STARS_2];
-static TStar g_Stars3[N_STARS_3];
+static TStar *g_Stars1;
+static TStar *g_Stars2;
+static TStar *g_Stars3;
 
 // Hi-scores
-static THiScore g_HiScores[HISCORE_COUNT];
+static THiScore *g_HiScores;
 
 // ============================================================================
 // LEVEL TABLE (25 levels, 1:1 with MSX/CPC)
@@ -1493,6 +1444,9 @@ static const TLevelConfig g_Levels[ENDGAME_FINAL_LEVEL] = {
 #define STAR_X1 (STAR_X0 + STAR_W)          // 256
 
 static void InitStarfield() {
+    g_Stars1 = (TStar*)AllocMem(sizeof(TStar) * N_STARS_1, MEMF_FAST);
+    g_Stars2 = (TStar*)AllocMem(sizeof(TStar) * N_STARS_2, MEMF_FAST);
+    g_Stars3 = (TStar*)AllocMem(sizeof(TStar) * N_STARS_3, MEMF_FAST);
     // Pseudo-random init using level + index as seed
     for (int i = 0; i < N_STARS_1; i++) {
         g_Stars1[i].x = (short)(((i * 37 + 13) % STAR_W) + STAR_X0);
@@ -1513,6 +1467,7 @@ static void InitStarfield() {
 // ============================================================================
 
 static void InitHiScores() {
+    g_HiScores = (THiScore*)AllocMem(sizeof(THiScore) * HISCORE_COUNT, MEMF_FAST);
     for (int i = 0; i < HISCORE_COUNT; i++) {
         g_HiScores[i].score = (HISCORE_COUNT - i) * 1000;
         g_HiScores[i].level = 1;
@@ -1532,6 +1487,7 @@ static void ResetShip() {
     g_FireCooldown    = 0;
     g_ShipPolarity    = 0;
     g_FireHoldFrames  = 0;
+    g_FireWasPressed  = 0;
 }
 
 static void ResetGameSession() {
@@ -1539,7 +1495,6 @@ static void ResetGameSession() {
     g_Lives      = 3;
     g_Level      = 1;
     g_NextLifeAt = EXTRA_LIFE_EVERY;
-    g_CurrentBiome = 0;
     g_BGScrollY     = BG_MAP_ROWS * BG_TILE_H - SCREEN_H;
     g_BorderScrollY = BORDER_H - SCREEN_H;
     for (int i = 0; i < MAX_ENEMIES;    i++) g_Enemies[i].active    = 0;
@@ -1743,14 +1698,13 @@ static void RenderFrame(UBYTE* screen_mem) {
                 // During a polarity sweep: draw the ship first, then the
                 // OPAQUE dome on top so the ship is hidden by the wipe.
                 UBYTE animFrame = (UBYTE)((g_FrameCounter >> 2) & 3);
-                DrawShipAnim(screen_mem, g_ShipX, g_ShipY, animFrame, (UBYTE)g_ShipPolarity);
-                DrawForceField(screen_mem, g_ShipX, g_ShipY, 0, g_ForceFieldTransition, g_ForceFieldSweepDir, g_ShipPolarity);
+                DrawShipAnim(screen_mem, g_ShipX, g_ShipY, (UBYTE)g_ShipPolarity);
+                DrawForceField(screen_mem, g_ShipX, g_ShipY, g_ForceFieldTransition, g_ForceFieldSweepDir, g_ShipPolarity);
             } else {
                 // Normal: scrolling bubble before the ship.
-                short ffPulse = (short)((g_FrameCounter / 6) % 3);
-                DrawForceField(screen_mem, g_ShipX, g_ShipY, ffPulse, 0, 0, g_ShipPolarity);
+                DrawForceField(screen_mem, g_ShipX, g_ShipY, 0, 0, g_ShipPolarity);
                 UBYTE animFrame = (UBYTE)((g_FrameCounter >> 2) & 3);
-                DrawShipAnim(screen_mem, g_ShipX, g_ShipY, animFrame, (UBYTE)g_ShipPolarity);
+                DrawShipAnim(screen_mem, g_ShipX, g_ShipY, (UBYTE)g_ShipPolarity);
             }
         }
         for (int i = 0; i < MAX_ENEMIES; i++) {
@@ -1775,18 +1729,31 @@ static void RenderFrame(UBYTE* screen_mem) {
         }
         for (int i = 0; i < MAX_SHOTS; i++) {
             if (!g_Shots[i].active) continue;
-            // Use shot's own variant (polarity at firing time), not current ship polarity.
-            // White (variant=0): accent BPL2 (reg 9=white), body BPL6 (reg 12=blue)
-            // Black (variant=1): accent BPL4 (reg 10=black), body BPL2+BPL4 (reg 11=red)
-            //   Body drawn to BPL2 via 2bpl, then ORed into BPL4 via OrBPL4.
+            short flip = g_FrameCounter & 1;
             if (g_Shots[i].variant == 0) {
-                DrawBob16_2bpl(screen_mem, g_ShotW_Mask, g_ShotW_DataHi, g_ShotW_DataLo,
-                               g_Shots[i].x, g_Shots[i].y, 1, 5, 8);
+                // Frame 0: accent→BPL2(white core), body→BPL6(blue glow)
+                // Frame 1: body→BPL2(white glow), accent→BPL6(blue core)
+                if (flip == 0) {
+                    DrawBob16_2bpl(screen_mem, g_Shot16W_Mask, g_Shot16W_Accent, g_Shot16W_Body,
+                                   g_Shots[i].x, g_Shots[i].y, 1, 5, 16);
+                } else {
+                    DrawBob16_2bpl(screen_mem, g_Shot16W_Mask, g_Shot16W_Body, g_Shot16W_Accent,
+                                   g_Shots[i].x, g_Shots[i].y, 1, 5, 16);
+                }
             } else {
-                DrawBob16_2bpl(screen_mem, g_ShotB_Mask, g_ShotB_DataHi, g_ShotB_DataLo,
-                               g_Shots[i].x, g_Shots[i].y, 3, 1, 8);
-                OrBPL4(screen_mem, g_ShotB_DataLo,
-                       g_Shots[i].x, g_Shots[i].y, 8);
+                // Frame 0: accent→BPL4(black core), body→BPL2+OrBPL4(red glow)
+                // Frame 1: body→BPL4(black glow), accent→BPL2+OrBPL4(red core)
+                if (flip == 0) {
+                    DrawBob16_2bpl(screen_mem, g_Shot16B_Mask, g_Shot16B_Accent, g_Shot16B_Body,
+                                   g_Shots[i].x, g_Shots[i].y, 3, 1, 16);
+                    OrBPL4(screen_mem, g_Shot16B_Body,
+                           g_Shots[i].x, g_Shots[i].y, 16);
+                } else {
+                    DrawBob16_2bpl(screen_mem, g_Shot16B_Mask, g_Shot16B_Body, g_Shot16B_Accent,
+                                   g_Shots[i].x, g_Shots[i].y, 3, 1, 16);
+                    OrBPL4(screen_mem, g_Shot16B_Accent,
+                           g_Shots[i].x, g_Shots[i].y, 16);
+                }
             }
         }
         for (int i = 0; i < MAX_ENEMY_SHOTS; i++) {
@@ -1829,13 +1796,18 @@ int main() {
     SysBase = *((struct ExecBase**)4UL);
     custom  = (struct Custom*)0xdff000;
 
+    if (AvailMem(MEMF_CHIP) < 384*1024 || AvailMem(MEMF_FAST) < 256*1024) {
+        KPrintF("Nau DX requires 1 MB RAM (512K chip + 512K slow)\n");
+        Exit(0);
+    }
+
     GfxBase = (struct GfxBase*)OpenLibrary((CONST_STRPTR)"graphics.library", 0);
     if (!GfxBase) Exit(0);
 
     DOSBase = (struct DosLibrary*)OpenLibrary((CONST_STRPTR)"dos.library", 0);
     if (!DOSBase) Exit(0);
 
-    KPrintF("Nau DX Amiga starting...\n");
+    KPrintF("Nau DX 1MB edition\n");
 
     InitHiScores();
     ResetGameSession();
@@ -1999,48 +1971,48 @@ int main() {
                 if ((joy & JOY_UP)    && g_ShipY > SHIP_MIN_Y) g_ShipY -= SHIP_SPEED_Y;
                 if ((joy & JOY_DOWN)  && g_ShipY < SHIP_MAX_Y) g_ShipY += SHIP_SPEED_Y;
 
-                // Fire with polarity swap
+                // Fire on press edge + hold to toggle polarity (stays on release)
                 {
-                    short fireHeldNow = (joy & JOY_FIRE) ? 1 : 0;
-                    if (fireHeldNow) {
-                        g_FireHoldFrames++;
-                        // Switch to black polarity after holding for POLARITY_HOLD_FRAMES
-                        if (g_FireHoldFrames == POLARITY_HOLD_FRAMES) {
-                            g_ForceFieldTransition = 4;     // 4-frame sweep
-                            g_ForceFieldSweepDir   = 0;     // white->black: wiper L->R
-                        }
-                        g_ShipPolarity = (g_FireHoldFrames >= POLARITY_HOLD_FRAMES) ? 1 : 0;
-                    } else {
-                        if (g_ShipPolarity == 1) {
-                            g_ForceFieldTransition = 4;     // 4-frame sweep
-                            g_ForceFieldSweepDir   = 1;     // black->white: wiper R->L
-                        }
-                        g_ShipPolarity   = 0;
+                    short fireNow = (joy & JOY_FIRE) ? 1 : 0;
+                    if (fireNow && !g_FireWasPressed) {
+                        // Edge press: fire once
                         g_FireHoldFrames = 0;
-                    }
-                    // Auto-fire on every cooldown cycle (existing behavior).
-                    // Cadence power-up: each absorbed shot in g_AbsorbCount lowers
-                    // the cooldown by 1, so a full bar fires every frame (rafaga
-                    // continua) and an empty bar uses the default FIRE_COOLDOWN.
-                    // Firing consumes 1 from the bar — the bar empties as you shoot.
-                    if (fireHeldNow && g_FireCooldown == 0) {
-                        for (int i = 0; i < MAX_SHOTS; i++) {
-                            if (!g_Shots[i].active) {
-                                g_Shots[i].active  = 1;
-                                g_Shots[i].variant = (short)g_ShipPolarity;
-                                g_Shots[i].x = (short)(g_ShipX + SHIP_W/2 - SHOT_W/2);
-                                g_Shots[i].y = (short)(g_ShipY - SHOT_H);
-
+                        if (g_FireCooldown == 0) {
+                            short sx1 = (short)(g_ShipX + 2);
+                            short sx2 = (short)(g_ShipX + SHIP_W - SHOT_W - 2);
+                            short sy  = (short)(g_ShipY - SHOT_H);
+                            short var = (short)g_ShipPolarity;
+                            short n   = 0;
+                            for (int i = 0; i < MAX_SHOTS && n < 2; i++) {
+                                if (!g_Shots[i].active) {
+                                    g_Shots[i].active  = 1;
+                                    g_Shots[i].variant = var;
+                                    g_Shots[i].x = (n == 0) ? sx1 : sx2;
+                                    g_Shots[i].y = sy;
+                                    n++;
+                                }
+                            }
+                            if (n > 0) {
                                 short cd = (short)(FIRE_COOLDOWN - g_AbsorbCount);
                                 if (cd < 0) cd = 0;
                                 g_FireCooldown = cd;
-
                                 if (g_AbsorbCount > 0) g_AbsorbCount--;
-
-                                break;
                             }
                         }
                     }
+                    if (fireNow) {
+                        g_FireHoldFrames++;
+                        // Hold to toggle polarity (once per hold)
+                        if (g_FireHoldFrames == POLARITY_HOLD_FRAMES) {
+                            short newPol = g_ShipPolarity ? 0 : 1;
+                            g_ForceFieldTransition = 4;
+                            g_ForceFieldSweepDir   = newPol ? 0 : 1;
+                            g_ShipPolarity = newPol;
+                        }
+                    } else {
+                        g_FireHoldFrames = 0;
+                    }
+                    g_FireWasPressed = fireNow;
                     if (g_FireCooldown > 0) g_FireCooldown--;
                     if (g_ForceFieldTransition > 0) g_ForceFieldTransition--;
                 }
@@ -2093,7 +2065,6 @@ int main() {
                     if (allDead) {
                         g_WaveActive = 0;
                         g_Level++;
-                        g_CurrentBiome = ((g_Level - 1) / 5) % BIOME_COUNT;
                     }
                 }
             }
@@ -2215,7 +2186,6 @@ int main() {
         } else if (g_GameState == GS_GAMEOVER || g_GameState == GS_WIN) {
             if (joy & JOY_FIRE) {
                 g_GameState = GS_TITLE;
-                g_TitleMode = TS_MENU;
                 ResetGameSession();
             }
         }

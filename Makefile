@@ -28,7 +28,11 @@ CCFLAGS   = -g -MP -MMD -m68000 -Ofast -nostdlib -Wextra -Wno-unused-function -W
 ASFLAGS   = -mcpu=68000 -g --register-prefix-optional -I$(SDKDIR)
 LDFLAGS   = -Wl,--emit-relocs,--gc-sections,-Ttext=0,-Map=$(OUT).map
 
-all: $(OUT).exe
+all: $(OUT).exe $(OUT).adf
+
+$(OUT).adf: $(OUT).exe
+	$(info Creating $(OUT).adf)
+	@exe2adf -i $(OUT).exe -a $(OUT).adf -l "NAU_DX"
 
 $(OUT).exe: $(OUT).elf
 	$(info Elf2Hunk $(program).exe)
