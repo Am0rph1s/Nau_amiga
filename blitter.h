@@ -15,6 +15,8 @@ extern int DrawBob16d2Asm(UBYTE* screen_mem, const UWORD* mask,
                            short x, short y, UBYTE planeHi, UBYTE planeLo, UWORD rows);
 extern int DrawForceFieldMaskAsm(void* screen_mem, short x, short y,
                                   const UWORD* mask, int planeIdx);
+extern int DrawForceFieldMask2Asm(void* screen_mem, short x, short y,
+                                   const UWORD* mask, int planeA, int planeB);
 
 // Entity update routines (68k ASM, see entities.s)
 extern void AsmUpdatePlayerShots(void);

@@ -1258,6 +1258,13 @@ static void DrawForceFieldMask(UBYTE* screen_mem, short x, short y,
     }
 }
 
+static void DrawForceFieldMask2(UBYTE* screen_mem, short x, short y,
+                                const UWORD* mask, int planeA, int planeB) {
+    if (!DrawForceFieldMask2Asm(screen_mem, x, y, mask, planeA, planeB)) return;
+    DrawForceFieldMask(screen_mem, x, y, mask, planeA);
+    DrawForceFieldMask(screen_mem, x, y, mask, planeB);
+}
+
 // Draw the force field. Two modes:
 //   - Normal  (transition == 0): scrolling banded-dither bubble.
 //                                 Pol A: BPL6 (reg 12 = blue)
@@ -1282,12 +1289,10 @@ static void DrawForceField(UBYTE* screen_mem, short shipX, short shipY,
         if (sweepDir == 0) {
             // white→black: old=blue(BPL6) sweeping out, new=red(BPL2+BPL4) sweeping in
             DrawForceFieldMask(screen_mem, mx, my, g_FFSweepSrcSet[idx], 5); // BPL6
-            DrawForceFieldMask(screen_mem, mx, my, g_FFSweepDstSet[idx], 3); // BPL4
-            DrawForceFieldMask(screen_mem, mx, my, g_FFSweepDstSet[idx], 1); // BPL2
+            DrawForceFieldMask2(screen_mem, mx, my, g_FFSweepDstSet[idx], 3, 1); // BPL4+BPL2
         } else {
             // black→white: old=red(BPL2+BPL4) sweeping out, new=blue(BPL6) sweeping in
-            DrawForceFieldMask(screen_mem, mx, my, g_FFSweepSrcSet[idx], 3); // BPL4
-            DrawForceFieldMask(screen_mem, mx, my, g_FFSweepSrcSet[idx], 1); // BPL2
+            DrawForceFieldMask2(screen_mem, mx, my, g_FFSweepSrcSet[idx], 3, 1); // BPL4+BPL2
             DrawForceFieldMask(screen_mem, mx, my, g_FFSweepDstSet[idx], 5); // BPL6
         }
     } else {
@@ -1296,8 +1301,7 @@ static void DrawForceField(UBYTE* screen_mem, short shipX, short shipY,
         if (polarity == 0) {
             DrawForceFieldMask(screen_mem, mx, my, g_FFBubScrollSet[scroll], 5);  // BPL6 = blue
         } else {
-            DrawForceFieldMask(screen_mem, mx, my, g_FFBubScrollSet[scroll], 3);  // BPL4
-            DrawForceFieldMask(screen_mem, mx, my, g_FFBubScrollSet[scroll], 1);  // BPL2 → BPL2+BPL4 = red
+            DrawForceFieldMask2(screen_mem, mx, my, g_FFBubScrollSet[scroll], 3, 1); // BPL4+BPL2 = red
         }
     }
 }
