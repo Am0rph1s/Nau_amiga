@@ -10,7 +10,7 @@
         .equ    BLTDPTH,  0x054
         .equ    BLTDPTL,  0x056
         .equ    BLTSIZE,  0x058
-        .equ    BLTDMOD,  0x06C
+        .equ    BLTDMOD,  0x062
 
         .text
 
@@ -31,6 +31,15 @@ ClearGameAreaAsm:
         move.l  28(sp),a0               | a0 = screen_mem (+4:ret, +24:6 regs×4)
         lea     CUSTOM,a1
 
+        | Wait for any previous blit (force field, etc.) before touching registers
+.cga_wait0:
+        move.w  DMACONR(a1),d0
+        btst    #14,d0
+        bne.s   .cga_wait0
+        move.w  DMACONR(a1),d0
+        btst    #14,d0
+        bne.s   .cga_wait0
+
         | Setup blitter once for all 3 planes
         move.w  #0x1000,BLTCON0(a1)     | USED=1, LF=0 → D = zero
         move.w  #0,BLTCON1(a1)
@@ -44,13 +53,6 @@ ClearGameAreaAsm:
         | --- Plane 1 (BPL2) = screen + 10240 + 8 ---
         lea     10240(a0),a2
         addq.l  #8,a2
-.cga_wait1:
-        move.w  DMACONR(a1),d0
-        btst    #14,d0
-        bne.s   .cga_wait1
-        move.w  DMACONR(a1),d0
-        btst    #14,d0
-        bne.s   .cga_wait1
         move.l  a2,d0
         swap    d0
         move.w  d0,BLTDPTH(a1)
