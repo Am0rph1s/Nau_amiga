@@ -125,8 +125,8 @@ __attribute__((always_inline)) inline short MouseRight() { return !((*(volatile 
 // ============================================================================
 #define SPR_CHAN_WORDS 12
 #define SPR_MAX_PAIRS 4
-#define SPR_FIRST_USABLE_PAIR 0
-#define SPR_USABLE_PAIRS 4
+#define SPR_FIRST_USABLE_PAIR 2
+#define SPR_USABLE_PAIRS 2
 #define SPR_SHOT_ROWS 8
 static UWORD* g_SprDataA = 0;
 static UWORD* g_SprDataB = 0;
