@@ -8,6 +8,7 @@
         .equ    BLTAFWM,  0x044
         .equ    BLTALWM,  0x046
         .equ    BLTDPTH,  0x054
+        .equ    BLTDPTL,  0x056
         .equ    BLTSIZE,  0x058
         .equ    BLTDMOD,  0x06C
 
@@ -23,47 +24,79 @@
         .global ClearGameAreaAsm
 ClearGameAreaAsm:
 | Clear planes 1,3,5 (PF2) — skip border bytes 0-7 and 32-39 (DrawBorder overwrites them)
-| Only clears bytes 8-31 (6 longwords per row = 24 bytes)
-        movem.l d0-d1/a0-a1,-(sp)
-        move.l  20(sp),a0
-        | Plane 1 = a0 + 10240 (PF2 bit0)
-        lea     10240(a0),a1
-        move.w  #255,d0
-.cga_p1_row:
-        clr.l   8(a1)
-        clr.l   12(a1)
-        clr.l   16(a1)
-        clr.l   20(a1)
-        clr.l   24(a1)
-        clr.l   28(a1)
-        lea     40(a1),a1
-        dbra    d0,.cga_p1_row
-        | Plane 3 = advance from plane2 end + 10240 -> plane3 (PF2 bit1)
-        lea     10240(a1),a1
-        move.w  #255,d0
-.cga_p3_row:
-        clr.l   8(a1)
-        clr.l   12(a1)
-        clr.l   16(a1)
-        clr.l   20(a1)
-        clr.l   24(a1)
-        clr.l   28(a1)
-        lea     40(a1),a1
-        dbra    d0,.cga_p3_row
-        | Plane 5 = advance from plane4 end + 10240 -> plane5 (PF2 bit2)
-        lea     10240(a1),a1
-        move.w  #255,d0
-.cga_p5_row:
-        clr.l   8(a1)
-        clr.l   12(a1)
-        clr.l   16(a1)
-        clr.l   20(a1)
-        clr.l   24(a1)
-        clr.l   28(a1)
-        lea     40(a1),a1
-        dbra    d0,.cga_p5_row
-        movem.l (sp)+,d0-d1/a0-a1
+| Uses blitter D-channel zero-fill (USED=1, LF=0 → D=0).
+| Only clears bytes 8-31 (12 words per row, 256 rows, 3 planes).
+| Stack: +4=return, +8=screen_mem
+        movem.l d0-d2/a0-a2,-(sp)
+        move.l  24(sp),a0               | a0 = screen_mem
+        lea     CUSTOM,a1
+
+        | Setup blitter once for all 3 planes
+        move.w  #0x0100,BLTCON0(a1)     | USED=1, LF=0 → D = zero
+        move.w  #0,BLTCON1(a1)
+        move.w  #0xFFFF,BLTAFWM(a1)
+        move.w  #0xFFFF,BLTALWM(a1)
+        | DMOD = 40 - 24 = 16: after writing 24 bytes, skip to next row
+        move.w  #16,BLTDMOD(a1)
+        | BLTSIZE = (255 << 6) | (12-1) = 0xFFCB
+        move.w  #0x3FCB,d2
+
+        | --- Plane 1 (BPL2) = screen + 10240 + 8 ---
+        lea     10240(a0),a2
+        addq.l  #8,a2
+.cga_wait1:
+        move.w  DMACONR(a1),d0
+        btst    #14,d0
+        bne.s   .cga_wait1
+        move.w  DMACONR(a1),d0
+        btst    #14,d0
+        bne.s   .cga_wait1
+        move.l  a2,d0
+        swap    d0
+        move.w  d0,BLTDPTH(a1)
+        swap    d0
+        move.w  d0,BLTDPTL(a1)
+        move.w  d2,BLTSIZE(a1)
+
+        | --- Plane 3 (BPL4) = screen + 30720 + 8 ---
+        lea     30720(a0),a2
+        addq.l  #8,a2
+.cga_wait2:
+        move.w  DMACONR(a1),d0
+        btst    #14,d0
+        bne.s   .cga_wait2
+        move.w  DMACONR(a1),d0
+        btst    #14,d0
+        bne.s   .cga_wait2
+        move.l  a2,d0
+        swap    d0
+        move.w  d0,BLTDPTH(a1)
+        swap    d0
+        move.w  d0,BLTDPTL(a1)
+        move.w  d2,BLTSIZE(a1)
+
+        | --- Plane 5 (BPL6) = screen + 5*10240 + 8 = screen + 51200 + 8 ---
+        move.l  a0,a2
+        add.l   #51200,a2
+        addq.l  #8,a2
+.cga_wait3:
+        move.w  DMACONR(a1),d0
+        btst    #14,d0
+        bne.s   .cga_wait3
+        move.w  DMACONR(a1),d0
+        btst    #14,d0
+        bne.s   .cga_wait3
+        move.l  a2,d0
+        swap    d0
+        move.w  d0,BLTDPTH(a1)
+        swap    d0
+        move.w  d0,BLTDPTL(a1)
+        move.w  d2,BLTSIZE(a1)
+
+        movem.l (sp)+,d0-d2/a0-a2
         rts
+
+
 
 | ============================================================
 | void ParallaxDrawAsm(void* screen_mem,

@@ -76,5 +76,5 @@ VS Code extension: **Amiga C/C++ Compile, Debug & Profile** (bartman). Per compi
 ## Key Files
 - **main.c**: game loop, VBlank handler, UpdateSpriteData, copper builder
 - **gfx.h**: shot sprite bitmaps (g_Shot_Body[8], g_Shot_Accent[8]), SHOT_SPR_WORDS=12
-- **blitter.s**: DrawBob16d2Asm assembly blitter routine
+- **blitter.s**: DrawBob16d2Asm, DrawForceFieldMaskAsm, DrawForceFieldMask2Asm assembly blitter routines, ClearGameAreaAsm (blitter D-zero-fill)
 - **nau_dx.h**: SHOT_H=8, SHOT_W=4, MAX_SHOTS=24
