@@ -41,7 +41,7 @@ ClearGameAreaAsm:
         bne.s   .cga_wait0
 
         | Setup blitter once for all 3 planes
-        move.w  #0x1000,BLTCON0(a1)     | USED=1, LF=0 → D = zero
+        move.w  #0x0100,BLTCON0(a1)     | USED=1 (bit 8), LF=0 → D = zero
         move.w  #0,BLTCON1(a1)
         move.w  #0xFFFF,BLTAFWM(a1)
         move.w  #0xFFFF,BLTALWM(a1)
