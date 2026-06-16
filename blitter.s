@@ -764,3 +764,105 @@ DrawBob16d2Asm:
 .db162_exit:
         movem.l (sp)+,d2-d7/a2-a6
         rts
+
+| ============================================================
+| int DrawForceFieldMaskAsm(void* screen_mem, short x, short y,
+|                           const UWORD* mask, int planeIdx)
+|
+| Fast-path for fully-visible 48x48 masks ORed into one bitplane.
+| Returns 0 on success, 1 if the C clipping fallback is needed.
+| Stack after movem (40 bytes): +44=screen, +50=x, +54=y, +56=mask, +62=planeIdx
+| ============================================================
+        .global DrawForceFieldMaskAsm
+DrawForceFieldMaskAsm:
+        movem.l d2-d7/a2-a5,-(sp)
+
+        move.l  44(sp),a2              | screen_mem
+        move.w  50(sp),d7              | x
+        move.w  54(sp),d6              | y
+        move.l  56(sp),a3              | mask
+        move.w  62(sp),d5              | planeIdx
+
+        | Fully-visible fast path only.
+        tst.w   d7
+        bmi     .ffm_fail
+        cmpi.w  #272,d7
+        bgt     .ffm_fail
+        tst.w   d6
+        bmi     .ffm_fail
+        cmpi.w  #208,d6
+        bgt     .ffm_fail
+
+        | a0 = screen_mem + planeIdx * 10240
+        move.w  d5,d0
+        mulu    #10240,d0
+        move.l  a2,a0
+        adda.l  d0,a0
+
+        | d2 = y * 40 + (x >> 4) * 2
+        move.w  d6,d2
+        lsl.w   #5,d2                  | y * 32
+        move.w  d6,d0
+        lsl.w   #3,d0                  | y * 8
+        add.w   d0,d2                  | y * 40
+        move.w  d7,d0
+        lsr.w   #4,d0
+        add.w   d0,d0
+        add.w   d0,d2
+
+        move.w  d7,d4
+        andi.w  #15,d4                 | shift
+        moveq   #16,d5
+        sub.w   d4,d5                  | invShift = 16 - shift
+        move.w  #47,d3                 | 48 rows
+
+        tst.w   d4
+        beq.s   .ffm_zero_loop
+
+.ffm_shift_loop:
+        move.w  (a3)+,d0               | m0
+        move.w  (a3)+,d1               | m1
+        move.w  (a3)+,d6               | m2
+
+        move.w  d0,d7                  | mv0 = m0 >> shift
+        lsr.w   d4,d7
+        or.w    d7,(a0,d2.w)
+
+        lsl.w   d5,d0                  | mv1 = (m0 << invShift) | (m1 >> shift)
+        move.w  d1,d7
+        lsr.w   d4,d7
+        or.w    d7,d0
+        or.w    d0,2(a0,d2.w)
+
+        lsl.w   d5,d1                  | mv2 = (m1 << invShift) | (m2 >> shift)
+        move.w  d6,d7
+        lsr.w   d4,d7
+        or.w    d7,d1
+        or.w    d1,4(a0,d2.w)
+
+        lsl.w   d5,d6                  | spill = m2 << invShift
+        or.w    d6,6(a0,d2.w)
+
+        addi.w  #40,d2
+        dbra    d3,.ffm_shift_loop
+        bra.s   .ffm_done
+
+.ffm_zero_loop:
+        move.w  (a3)+,d0
+        move.w  (a3)+,d1
+        move.w  (a3)+,d6
+        or.w    d0,(a0,d2.w)
+        or.w    d1,2(a0,d2.w)
+        or.w    d6,4(a0,d2.w)
+        addi.w  #40,d2
+        dbra    d3,.ffm_zero_loop
+
+.ffm_done:
+        moveq   #0,d0
+        bra.s   .ffm_exit
+
+.ffm_fail:
+        moveq   #1,d0
+.ffm_exit:
+        movem.l (sp)+,d2-d7/a2-a5
+        rts

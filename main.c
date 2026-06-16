@@ -1230,6 +1230,7 @@ __attribute__((externally_visible)) volatile short g_FrameCounter = 0;
 // planes can be used to combine BPL4 + BPL6 (e.g. for the polarity-sweep).
 static void DrawForceFieldMask(UBYTE* screen_mem, short x, short y,
                               const UWORD* mask, int planeIdx) {
+    if (!DrawForceFieldMaskAsm(screen_mem, x, y, mask, planeIdx)) return;
     if (x <= -FORCEFIELD_W || x >= SCREEN_W || y <= -FORCEFIELD_H || y >= SCREEN_H) return;
     UWORD shift = (UWORD)(x & 15);
     UWORD rows  = FORCEFIELD_H;
