@@ -10,7 +10,7 @@ VS Code extension: **Amiga C/C++ Compile, Debug & Profile** (bartman). Per compi
 
 ### SPRxPOS (write-only, $dff140 + 8*n)
 - `[15:8]` = VSTART[7:0]
-- `[7:0]` = HSTART[7:1] (bit 0 sempre 0) → `hstart & 0xFE`
+- `[7:0]` = HSTART[8:1] → `(hstart >> 1) & 0xFF`
 
 ### SPRxCTL (write-only, $dff142 + 8*n)
 - `[11:8]` = VSTOP[3:0] (4 bits a OCS, compare amb scanline[3:0]) → `(vstart + SHOT_H) & 0x0F`
@@ -28,7 +28,7 @@ VS Code extension: **Amiga C/C++ Compile, Debug & Profile** (bartman). Per compi
 - **6 bitplanes**: PF1 (bg, 3 planes) + PF2 (game sprites, 3 planes)
 - **Copper list**: double-buffered 1024 bytes, rebuilt each frame
 - **Sprites**: OCS attached pairs for player shots (max 4 simultaneous per frame, blitter fallback)
-- **VBlank handler**: resets all sprite pointers + POS/CTL, swaps copper list
+- **VBlank handler**: swaps copper list and sprite buffer, sets SPRxPTH/PTL for all 8 channels (chip RAM POS/CTL positions the sprites)
 
 ## OCS Sprite System
 
@@ -44,16 +44,16 @@ VS Code extension: **Amiga C/C++ Compile, Debug & Profile** (bartman). Per compi
 - Color registers: `COLOR(17+4n)` for body, `COLOR(18+4n)` for accent, `COLOR(19+4n)` for overlay, where n = pair index (0-3)
 
 ### VBlank Handler
-- Sets SPRxPTH/PTL for all 8 channels
-- Even channels: SPRxPOS=0, SPRxCTL=VSTOP=8 → triggers DMA at scanline 0
-- Odd channels: SPRxPOS=0, SPRxCTL=VSTOP=8, ATT=1 → attaches to even (pulled by even DMA)
+- Sets SPRxPTH/PTL for all 8 channels — chip RAM data (POS/CTL) controls position
+- Does NOT write SPRxPOS/CTL registers (would override chip RAM VSTART)
 
-### DMA Re-read at Scanline 0
-1. VBlank sets SPRxPOS/CTL in hardware registers
-2. Even channel VSTART=0 matches beam counter at scanline 0
-3. DMA reads POS+CTL from chip RAM (even CTL has VSTART[8]+HSTART[0])
-4. Odd chip RAM has ATT=1 → DMA attaches and reads odd data (even=body, odd=accent)
-5. 8 data words read (one per scanline), then terminator (0x0000) stops DMA
+### DMA Trigger (chip RAM POS/CTL drives positioning)
+1. Init sets SPRxPOS/CTL to VSTART=300 (off-screen)
+2. At scanline 300 of frame 1: DMA matches VSTART=300, reads POS+CTL from chip RAM
+3. Chip RAM for used pairs has correct VSTART (e.g., 150) → register updated
+4. Frame 2 onwards: DMA triggers at the correct VSTART from chip RAM
+5. 8 data words read (one per scanline), then VSTOP match or terminator stops DMA
+6. VBlank handler only updates SPRxPTH/PTL — POS/CTL carry over from chip RAM load
 
 ### Palette (Sprite Colors)
 - Formula: Pair `n` → `COLOR(17+4n)` for pixel 01 (body), `COLOR(18+4n)` for pixel 10 (accent), `COLOR(19+4n)` for pixel 11 (overlay)
@@ -63,9 +63,9 @@ VS Code extension: **Amiga C/C++ Compile, Debug & Profile** (bartman). Per compi
 - `g_Palette[32]` (indices 0-31); copper writes COLOR00-31 each frame
 
 ### Slot Assignment
-- Each shot evaluates: `basePair = (variant==0) ? 0 : 2`, iterates 2 pairs of matching polarity
-- Rejects `x > 126` (HSTART overflow with 8-bit OCS)
-- `g_SprInstCount` max 4 (one per pair)
+- Each shot iterates available pairs, assigns first free pair of any polarity
+- Rejects `x > 319` (off-screen)
+- Max 4 sprinstances (one per pair)
 - Remaining shots fall back to blitter `DrawBob16_2bpl`
 
 ### Constraints

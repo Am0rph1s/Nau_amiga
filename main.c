@@ -125,9 +125,16 @@ __attribute__((always_inline)) inline short MouseRight() { return !((*(volatile 
 // ============================================================================
 #define SPR_CHAN_WORDS 12
 #define SPR_MAX_PAIRS 4
+#define SPR_FIRST_USABLE_PAIR 2
+#define SPR_USABLE_PAIRS 2
 #define SPR_SHOT_ROWS 8
-static UWORD* g_SprData = 0;
-static short g_SprPairShot[SPR_MAX_PAIRS];
+static UWORD* g_SprDataA = 0;
+static UWORD* g_SprDataB = 0;
+static UWORD* g_SprDataActive = 0;
+static UWORD* g_SprDataBuild = 0;
+static UWORD* g_SprDataPending = 0;
+static short g_SprPairShotActive[SPR_MAX_PAIRS];
+static short g_SprPairShotBuild[SPR_MAX_PAIRS];
 
 // ============================================================================
 // PARALLAX SCROLL
@@ -371,23 +378,32 @@ static void DrawBob32_2bpl(UBYTE* screen_mem,
         UWORD base = ry * (ROW_BYTES / 2) + wx;
         // Write planeHi (PF2 bit 0)
         UWORD* phi = (UWORD*)(screen_mem + planeHi * PLANE_BYTES);
-        phi[base]   = (UWORD)((phi[base]   & ~mv0) | (hv0 & mv0));
-        phi[base+1] = (UWORD)((phi[base+1] & ~mv1) | (hv1 & mv1));
-        if (wx + 2 < ROW_BYTES / 2)
+        if (base < (ROW_BYTES/2) * SCREEN_H) {
+            phi[base] = (UWORD)((phi[base] & ~mv0) | (hv0 & mv0));
+        }
+        if (wx + 1 < ROW_BYTES / 2) {
+            phi[base+1] = (UWORD)((phi[base+1] & ~mv1) | (hv1 & mv1));
+        }
+        if (wx + 2 < ROW_BYTES / 2) {
             phi[base+2] = (UWORD)((phi[base+2] & ~mv2) | (hv2 & mv2));
+        }
         // Write planeLo (PF2 bit 1)
         UWORD* plo = (UWORD*)(screen_mem + planeLo * PLANE_BYTES);
-        plo[base]   = (UWORD)((plo[base]   & ~mv0) | (lv0 & mv0));
-        plo[base+1] = (UWORD)((plo[base+1] & ~mv1) | (lv1 & mv1));
-        if (wx + 2 < ROW_BYTES / 2)
+        if (base < (ROW_BYTES/2) * SCREEN_H) {
+            plo[base] = (UWORD)((plo[base] & ~mv0) | (lv0 & mv0));
+        }
+        if (wx + 1 < ROW_BYTES / 2) {
+            plo[base+1] = (UWORD)((plo[base+1] & ~mv1) | (lv1 & mv1));
+        }
+        if (wx + 2 < ROW_BYTES / 2) {
             plo[base+2] = (UWORD)((plo[base+2] & ~mv2) | (lv2 & mv2));
+        }
         // Clear plane 5 (PF2 bit 2) in mask area — only if not a data plane
         if (planeHi != 5 && planeLo != 5) {
             UWORD* pl5 = (UWORD*)(screen_mem + 5 * PLANE_BYTES);
-            pl5[base]   &= ~mv0;
-            pl5[base+1] &= ~mv1;
-            if (wx + 2 < ROW_BYTES / 2)
-                pl5[base+2] &= ~mv2;
+            if (base < (ROW_BYTES/2) * SCREEN_H) pl5[base] &= ~mv0;
+            if (wx + 1 < ROW_BYTES / 2) pl5[base+1] &= ~mv1;
+            if (wx + 2 < ROW_BYTES / 2) pl5[base+2] &= ~mv2;
         }
     }
 }
@@ -397,13 +413,23 @@ static void DrawBob32_2bpl(UBYTE* screen_mem,
 // body on BPL2+BPL4 = reg 11 (per-pol: blue or red), accent stays BPL4-only = black).
 static void OrBPL4(UBYTE* screen_mem, const UWORD* data,
                     short x, short y, UWORD rows) {
-    UWORD wx = (UWORD)(x >> 4);
-    UWORD sh = (UWORD)(x & 15);
+    if (x <= -16 || x >= SCREEN_W || y <= -(short)rows || y >= SCREEN_H) return;
+    UWORD shift = (UWORD)(x & 15);
+    if (y < 0) {
+        UWORD skip = (UWORD)(-y);
+        data += skip;
+        rows = (rows > skip) ? rows - skip : 0;
+        y = 0;
+    }
+    if (y + (short)rows > SCREEN_H)
+        rows = (UWORD)(SCREEN_H - y);
+    if (rows == 0) return;
+    UWORD wx = (UWORD)(x < 0 ? 0 : x) >> 4;
     UWORD* pl = (UWORD*)(screen_mem + 3 * PLANE_BYTES);
     for (UWORD row = 0; row < rows; row++) {
         UWORD w = data[row];
-        UWORD b0 = w >> sh;
-        UWORD b1 = sh ? (UWORD)(w << (16 - sh)) : 0;
+        UWORD b0 = w >> shift;
+        UWORD b1 = shift ? (UWORD)(w << (16 - shift)) : 0;
         UWORD ry = (UWORD)y + row;
         UWORD base = ry * (ROW_BYTES / 2) + wx;
         pl[base] |= b0;
@@ -480,6 +506,7 @@ static void DrawShipAnim(UBYTE* screen_mem, short x, short y, UBYTE colorMode) {
     if (y + (short)rows > SCREEN_H) rows = (UWORD)(SCREEN_H - y);
     if (rows == 0) return;
     UWORD wx = (UWORD)(x < 0 ? 0 : x) >> 4;
+    UWORD rowWords = ROW_BYTES / 2;
     UWORD* pl1 = (UWORD*)(screen_mem + 1 * PLANE_BYTES);
     UWORD* pl3 = (UWORD*)(screen_mem + 3 * PLANE_BYTES);
     UWORD* pl5 = (UWORD*)(screen_mem + 5 * PLANE_BYTES);
@@ -509,36 +536,46 @@ static void DrawShipAnim(UBYTE* screen_mem, short x, short y, UBYTE colorMode) {
         UWORD dv1 = shift ? (UWORD)((d0 << (16-shift)) | (d1 >> shift)) : d1;
         UWORD dv2 = shift ? (UWORD)(d1 << (16-shift)) : 0;
         // p0 → BPL2
-        pl1[base]   = (UWORD)((pl1[base]   & ~mv0) | (wv0 & mv0));
-        pl1[base+1] = (UWORD)((pl1[base+1] & ~mv1) | (wv1 & mv1));
-        if (wx + 2 < ROW_BYTES / 2)
+        if (wx < rowWords) {
+            pl1[base]   = (UWORD)((pl1[base]   & ~mv0) | (wv0 & mv0));
+            pl3[base]   = (UWORD)((pl3[base]   & ~mv0) | (dv0 & mv0));
+        }
+        if (wx + 1 < rowWords) {
+            pl1[base+1] = (UWORD)((pl1[base+1] & ~mv1) | (wv1 & mv1));
+            pl3[base+1] = (UWORD)((pl3[base+1] & ~mv1) | (dv1 & mv1));
+        }
+        if (wx + 2 < rowWords) {
             pl1[base+2] = (UWORD)((pl1[base+2] & ~mv2) | (wv2 & mv2));
-        // p2 → BPL4
-        pl3[base]   = (UWORD)((pl3[base]   & ~mv0) | (dv0 & mv0));
-        pl3[base+1] = (UWORD)((pl3[base+1] & ~mv1) | (dv1 & mv1));
-        if (wx + 2 < ROW_BYTES / 2)
             pl3[base+2] = (UWORD)((pl3[base+2] & ~mv2) | (dv2 & mv2));
+        }
         if (colorMode == 0) {
             // Pol A: p1 → BPL6 (blau)
-            pl5[base]   = (UWORD)((pl5[base]   & ~mv0) | (mv0d & mv0));
-            pl5[base+1] = (UWORD)((pl5[base+1] & ~mv1) | (mv1d & mv1));
-            if (wx + 2 < ROW_BYTES / 2)
+            if (wx < rowWords) {
+                pl5[base]   = (UWORD)((pl5[base]   & ~mv0) | (mv0d & mv0));
+            }
+            if (wx + 1 < rowWords) {
+                pl5[base+1] = (UWORD)((pl5[base+1] & ~mv1) | (mv1d & mv1));
+            }
+            if (wx + 2 < rowWords) {
                 pl5[base+2] = (UWORD)((pl5[base+2] & ~mv2) | (mv2d & mv2));
+            }
         } else {
             // Pol B: p1 → BPL2+BPL4 (vermell via reg 11)
-            pl1[base]   |= mv0d & mv0;
-            pl1[base+1] |= mv1d & mv1;
-            if (wx + 2 < ROW_BYTES / 2)
+            if (wx < rowWords) {
+                pl1[base]   |= mv0d & mv0;
+                pl3[base]   |= mv0d & mv0;
+                pl5[base]   &= ~mv0;
+            }
+            if (wx + 1 < rowWords) {
+                pl1[base+1] |= mv1d & mv1;
+                pl3[base+1] |= mv1d & mv1;
+                pl5[base+1] &= ~mv1;
+            }
+            if (wx + 2 < rowWords) {
                 pl1[base+2] |= mv2d & mv2;
-            pl3[base]   |= mv0d & mv0;
-            pl3[base+1] |= mv1d & mv1;
-            if (wx + 2 < ROW_BYTES / 2)
                 pl3[base+2] |= mv2d & mv2;
-            // Clear BPL6 (no stale data)
-            pl5[base]   &= ~mv0;
-            pl5[base+1] &= ~mv1;
-            if (wx + 2 < ROW_BYTES / 2)
                 pl5[base+2] &= ~mv2;
+            }
         }
     }
 }
@@ -1201,6 +1238,7 @@ static void DrawForceFieldMask(UBYTE* screen_mem, short x, short y,
     if (y + (short)rows > SCREEN_H) rows = (UWORD)(SCREEN_H - y);
     if (rows == 0) return;
     UWORD wx = (UWORD)(x < 0 ? 0 : x) >> 4;
+    UWORD rowWords = ROW_BYTES / 2;
     UWORD* plane = (UWORD*)(screen_mem + planeIdx * PLANE_BYTES);
     for (UWORD row = 0; row < rows; row++) {
         UWORD ri   = row + skip;
@@ -1209,14 +1247,11 @@ static void DrawForceFieldMask(UBYTE* screen_mem, short x, short y,
         UWORD mv1 = shift ? (UWORD)((m0 << (16-shift)) | (m1 >> shift)) : m1;
         UWORD mv2 = shift ? (UWORD)((m1 << (16-shift)) | (m2 >> shift)) : m2;
         UWORD ry   = (UWORD)y + row;
-        UWORD base = ry * (ROW_BYTES / 2) + wx;
-        plane[base]   |= mv0;
-        if (wx + 1 < ROW_BYTES / 2) plane[base+1] |= mv1;
-        if (wx + 2 < ROW_BYTES / 2) plane[base+2] |= mv2;
-        // 4th word: the rightmost `shift` pixels of the mask spill over
-        // the 3 standard words. Without this the right edge of the bubble
-        // (or the sweep) is clipped when the dome isn't word-aligned.
-        if (shift > 0 && wx + 3 < ROW_BYTES / 2) {
+        UWORD base = ry * rowWords + wx;
+        if (wx < rowWords) plane[base] |= mv0;
+        if (wx + 1 < rowWords) plane[base+1] |= mv1;
+        if (wx + 2 < rowWords) plane[base+2] |= mv2;
+        if (shift > 0 && wx + 3 < rowWords) {
             plane[base+3] |= m2 << (16 - shift);
         }
     }
@@ -1632,10 +1667,17 @@ static __attribute__((interrupt)) void VBlankHandler() {
         g_PendingCop = 0;
     }
     custom->copjmp1 = 0;  // strobe: force copper to reload COP1LC immediately
-    // Set sprite pointers for all 8 channels (4 attached pairs)
-    if (g_SprData) {
+    if (g_SprDataPending && g_SprDataPending != g_SprDataActive) {
+        g_SprDataActive = g_SprDataPending;
+        g_SprDataPending = 0;
+        g_SprDataBuild = (g_SprDataActive == g_SprDataA) ? g_SprDataB : g_SprDataA;
+        for (int p = 0; p < SPR_MAX_PAIRS; p++)
+            g_SprPairShotActive[p] = g_SprPairShotBuild[p];
+    }
+    // Set sprite pointers for all 8 channels — chip RAM has correct POS/CTL
+    if (g_SprDataActive) {
         for (int s = 0; s < 8; s++) {
-            ULONG addr = (ULONG)(g_SprData + s * SPR_CHAN_WORDS);
+            ULONG addr = (ULONG)(g_SprDataActive + s * SPR_CHAN_WORDS);
             volatile USHORT* ptr = (volatile USHORT*)(0xDFF120 + s * 4);
             ptr[0] = (USHORT)(addr >> 16);
             ptr[1] = (USHORT)addr;
@@ -1703,20 +1745,24 @@ static void BuildCopperListEx(USHORT* cop, const UBYTE** pf1_planes, const UBYTE
 // MAIN
 // ============================================================================
 
-static void UpdateSpriteData() {
-    // Mark all pairs as unused
+static void UpdateSpriteData(UWORD* sprData) {
+    // Mark all pairs as unused in the build buffer
     for (int p = 0; p < SPR_MAX_PAIRS; p++)
-        g_SprPairShot[p] = -1;
+        g_SprPairShotBuild[p] = -1;
     // Assign active shots to sprite pairs
     for (int i = 0; i < MAX_SHOTS; i++) {
         if (!g_Shots[i].active) continue;
-        if (g_Shots[i].x > 126) continue;  // HSTART wraps at 8-bit
-        short basePair = (g_Shots[i].variant == 0) ? 0 : 2;
+        if (g_Shots[i].x < -SHOT_W || g_Shots[i].x >= SCREEN_W) continue;
+        if (g_Shots[i].x > 126) continue;  // OCS HSTART wraps; draw with blitter fallback
         int pair = -1;
-        if (g_SprPairShot[basePair] < 0) pair = basePair;
-        else if (g_SprPairShot[basePair+1] < 0) pair = basePair + 1;
+        for (int p = SPR_FIRST_USABLE_PAIR; p < SPR_FIRST_USABLE_PAIR + SPR_USABLE_PAIRS; p++) {
+            if (g_SprPairShotBuild[p] < 0) {
+                pair = p;
+                break;
+            }
+        }
         if (pair < 0) continue;
-        g_SprPairShot[pair] = i;
+        g_SprPairShotBuild[pair] = i;
         TShot* shot = &g_Shots[i];
         short hstart = 129 + shot->x;
         short vstart = 44 + shot->y;
@@ -1724,50 +1770,64 @@ static void UpdateSpriteData() {
         UWORD vstop = (UWORD)(vstart + SPR_SHOT_ROWS) & 0x0F;
         UWORD evenCtl = (vstop << 8) | ((((UWORD)vstart >> 8) & 1) << 7) | ((UWORD)hstart & 1);
         UWORD oddCtl  = (vstop << 8) | (1 << 7) | ((UWORD)hstart & 1);
-        UWORD* even = g_SprData + pair * 2 * SPR_CHAN_WORDS;
+        UWORD* even = sprData + pair * 2 * SPR_CHAN_WORDS;
         UWORD* odd  = even + SPR_CHAN_WORDS;
         even[0] = pos;  even[1] = evenCtl;
         odd[0]  = pos;  odd[1]  = oddCtl;
-        short flip = g_FrameCounter & 1;
-        const UWORD* body   = g_ShotSpr_Body;
-        const UWORD* accent = g_ShotSpr_Accent;
-        if (flip) { const UWORD* t = body; body = accent; accent = t; }
         for (int r = 0; r < SPR_SHOT_ROWS; r++) {
-            even[2+r] = body[r];
-            odd[2+r]  = accent[r];
+            even[2+r] = g_ShotSpr_Body[r];
+            odd[2+r]  = g_ShotSpr_Accent[r];
         }
         even[10] = 0; even[11] = 0;
         odd[10]  = 0; odd[11]  = 0;
     }
-    // Mark unused pairs as off-screen (VSTART=300, in VBLANK area)
+    // Mark unused pairs as off-screen — clear data words, set POS/CTL to VSTART=300
     for (int p = 0; p < SPR_MAX_PAIRS; p++) {
-        if (g_SprPairShot[p] >= 0) continue;
-        UWORD* even = g_SprData + p * 2 * SPR_CHAN_WORDS;
+        if (g_SprPairShotBuild[p] >= 0) continue;
+        UWORD* even = sprData + p * 2 * SPR_CHAN_WORDS;
         UWORD* odd  = even + SPR_CHAN_WORDS;
-        USHORT offPos = ((USHORT)(300 & 0xFF) << 8);
-        USHORT offCtl = (((300 >> 8) & 1) << 7);
-        even[0] = offPos; even[1] = offCtl;
-        odd[0]  = offPos; odd[1]  = offCtl;
+        short vstart = 300;
+        short vstop  = (short)((vstart + SPR_SHOT_ROWS) & 0x0F);
+        even[0] = ((USHORT)(vstart & 0xFF) << 8);                 // VSTART[7:0]
+        even[1] = (UWORD)(vstop << 8) | ((((UWORD)vstart >> 8) & 1) << 7);
+        odd[0]  = even[0];
+        odd[1]  = (UWORD)(vstop << 8) | (1 << 7);                // ATT=1
+        for (int w = 2; w < SPR_CHAN_WORDS; w++) {
+            even[w] = 0;
+            odd[w]  = 0;
+        }
     }
     // Update sprite palette in g_Palette for attached pairs
     for (int p = 0; p < SPR_MAX_PAIRS; p++) {
-        int idx = g_SprPairShot[p];
-        UWORD bodyColor, accentColor;
-        if (idx >= 0 && g_Shots[idx].variant == 0) {
-            bodyColor = 0xFFF; accentColor = 0x0CF;  // white shot
-        } else {
-            bodyColor = 0x000; accentColor = 0xF00;  // black shot
+        int idx = g_SprPairShotBuild[p];
+        UWORD bodyColor = 0;
+        UWORD accentColor = 0;
+        UWORD overlayColor = 0;
+        if (idx >= 0) {
+            if (g_Shots[idx].variant == 0) {
+                bodyColor = 0xFFF;
+                accentColor = 0x0CF;
+                overlayColor = 0x0CF;
+            } else {
+                bodyColor = 0x000;
+                accentColor = 0xF00;
+                overlayColor = 0xF00;
+            }
         }
-        int baseReg = 17 + p * 4;
-        g_Palette[baseReg]   = bodyColor;
-        g_Palette[baseReg+1] = accentColor;
-        g_Palette[baseReg+2] = 0x0CF;  // overlay
-        if (baseReg + 3 < 32) g_Palette[baseReg+3] = 0;
+        if (p < SPR_MAX_PAIRS) {
+            int baseReg = 17 + p * 4;
+            if (baseReg + 2 < 32) {
+                g_Palette[baseReg]   = bodyColor;
+                g_Palette[baseReg+1] = accentColor;
+                g_Palette[baseReg+2] = overlayColor;
+            }
+        }
     }
 }
 
 static void RenderFrame(UBYTE* screen_mem) {
-    UpdateSpriteData();
+    UpdateSpriteData(g_SprDataBuild);
+    g_SprDataPending = g_SprDataBuild;
     ClearGameArea(screen_mem);
     DrawBorder(screen_mem, g_BorderScrollY);
     if (g_StarsEnabled) {
@@ -1812,10 +1872,11 @@ static void RenderFrame(UBYTE* screen_mem) {
         }
         for (int i = 0; i < MAX_SHOTS; i++) {
             if (!g_Shots[i].active) continue;
-            // Check if this shot got a HW sprite slot — skip blitter
+            // Check if this shot has a HW sprite slot currently active.
+            // If it is only planned for the next frame, draw it in software this frame.
             int hasSpr = 0;
             for (int p = 0; p < SPR_MAX_PAIRS; p++)
-                if (g_SprPairShot[p] == i) { hasSpr = 1; break; }
+                if (g_SprPairShotActive[p] == i) { hasSpr = 1; break; }
             if (hasSpr) continue;
             short flip = g_FrameCounter & 1;
             if (g_Shots[i].variant == 0) {
@@ -1827,17 +1888,10 @@ static void RenderFrame(UBYTE* screen_mem) {
                                    g_Shots[i].x, g_Shots[i].y, 1, 5, 16);
                 }
             } else {
-                if (flip == 0) {
-                    DrawBob16_2bpl(screen_mem, g_Shot16B_Mask, g_Shot16B_Accent, g_Shot16B_Body,
-                                   g_Shots[i].x, g_Shots[i].y, 3, 1, 16);
-                    OrBPL4(screen_mem, g_Shot16B_Body,
-                           g_Shots[i].x, g_Shots[i].y, 16);
-                } else {
-                    DrawBob16_2bpl(screen_mem, g_Shot16B_Mask, g_Shot16B_Body, g_Shot16B_Accent,
-                                   g_Shots[i].x, g_Shots[i].y, 3, 1, 16);
-                    OrBPL4(screen_mem, g_Shot16B_Accent,
-                           g_Shots[i].x, g_Shots[i].y, 16);
-                }
+                DrawBob16_2bpl(screen_mem, g_Shot16B_Mask, g_Shot16B_Accent, g_Shot16B_Body,
+                               g_Shots[i].x, g_Shots[i].y, 3, 1, 16);
+                OrBPL4(screen_mem, g_Shot16B_Body,
+                       g_Shots[i].x, g_Shots[i].y, 16);
             }
         }
         for (int i = 0; i < MAX_ENEMY_SHOTS; i++) {
@@ -1926,8 +1980,23 @@ int main() {
     // --- Allocate HW sprite chip RAM (4 attached pairs × 2 channels × 12 words) ---
     {
         const ULONG sprDataSize = SPR_MAX_PAIRS * 2 * SPR_CHAN_WORDS * sizeof(UWORD);
-        g_SprData = (UWORD*)AllocMem(sprDataSize, MEMF_CHIP | MEMF_CLEAR);
-        for (int p = 0; p < SPR_MAX_PAIRS; p++) g_SprPairShot[p] = -1;
+        g_SprDataA = (UWORD*)AllocMem(sprDataSize, MEMF_CHIP | MEMF_CLEAR);
+        g_SprDataB = (UWORD*)AllocMem(sprDataSize, MEMF_CHIP | MEMF_CLEAR);
+        if (!g_SprDataA || !g_SprDataB) {
+            FreeMem(screen_mem, buf_size * 2);
+            if (g_SprDataA) FreeMem(g_SprDataA, sprDataSize);
+            if (g_SprDataB) FreeMem(g_SprDataB, sprDataSize);
+            CloseLibrary((struct Library*)DOSBase);
+            CloseLibrary((struct Library*)GfxBase);
+            Exit(0);
+        }
+        g_SprDataActive = g_SprDataA;
+        g_SprDataBuild = g_SprDataB;
+        g_SprDataPending = 0;
+        for (int p = 0; p < SPR_MAX_PAIRS; p++) {
+            g_SprPairShotActive[p] = -1;
+            g_SprPairShotBuild[p] = -1;
+        }
     }
 
     // --- Allocate double-buffered copper lists ---
@@ -1952,15 +2021,15 @@ int main() {
     custom->dmacon = DMAF_SETCLR | DMAF_MASTER | DMAF_RASTER | DMAF_COPPER | DMAF_BLITTER | DMAF_SPRITE;
 
     // Init sprite pointers (VBlank handler will update per frame)
-    if (g_SprData) {
+    if (g_SprDataActive) {
         for (int s = 0; s < 8; s++) {
             volatile USHORT* ptr = (volatile USHORT*)(0xDFF120 + s*4);
-            ULONG addr = (ULONG)(g_SprData + s * SPR_CHAN_WORDS);
+            ULONG addr = (ULONG)(g_SprDataActive + s * SPR_CHAN_WORDS);
             ptr[0] = (USHORT)(addr >> 16);
             ptr[1] = (USHORT)addr;
             volatile USHORT* pos = (volatile USHORT*)(0xDFF140 + s*8);
-            pos[0] = (USHORT)(256 << 8);  // off-screen
-            pos[1] = 0;
+            pos[0] = ((USHORT)(300 & 0xFF) << 8);  // VSTART[7:0]=44
+            pos[1] = (1 << 7);                       // VSTART[8]=1 → VSTART=300
         }
     }
 
