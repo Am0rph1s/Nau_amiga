@@ -32,13 +32,13 @@ ClearGameAreaAsm:
         lea     CUSTOM,a1
 
         | Setup blitter once for all 3 planes
-        move.w  #0x0100,BLTCON0(a1)     | USED=1, LF=0 → D = zero
+        move.w  #0x1000,BLTCON0(a1)     | USED=1, LF=0 → D = zero
         move.w  #0,BLTCON1(a1)
         move.w  #0xFFFF,BLTAFWM(a1)
         move.w  #0xFFFF,BLTALWM(a1)
         | DMOD = 40 - 24 = 16: after writing 24 bytes, skip to next row
         move.w  #16,BLTDMOD(a1)
-        | BLTSIZE = (255 << 6) | (12-1) = 0xFFCB
+        | BLTSIZE = (255 << 6) | (12-1) = 0x3FCB
         move.w  #0x3FCB,d2
 
         | --- Plane 1 (BPL2) = screen + 10240 + 8 ---
