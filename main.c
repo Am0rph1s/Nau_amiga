@@ -121,6 +121,15 @@ __attribute__((always_inline)) inline short MouseRight() { return !((*(volatile 
 #define PLANE_BYTES (ROW_BYTES * SCREEN_H)
 
 // ============================================================================
+// HW SPRITE MULTIPLEXING (player shots, 4 attached pairs)
+// ============================================================================
+#define SPR_CHAN_WORDS 12
+#define SPR_MAX_PAIRS 4
+#define SPR_SHOT_ROWS 8
+static UWORD* g_SprData = 0;
+static short g_SprPairShot[SPR_MAX_PAIRS];
+
+// ============================================================================
 // PARALLAX SCROLL
 // ============================================================================
 
@@ -1325,22 +1334,23 @@ static UWORD g_Palette[32] = {
     0x0212,              // 13  PF2 border dark
     0x0756,              // 14  PF2 border mid
     0x0434,              // 15  PF2 border light
-    // Slots 16-28: hardware sprites (enemy shots, 4 sprites, red outline + white fill)
+    // Slots 16-31: HW sprite colors (updated per frame by UpdateSpriteData)
     0x0000,              // 16  spare
-    0x0F00,              // 17  SPR0 outline (red)
-    0x0000,              // 18  SPR0 unused
-    0x0FFF,              // 19  SPR0 fill (white)
-    0x0F00,              // 20  SPR1 outline
-    0x0000,              // 21  SPR1 unused
-    0x0FFF,              // 22  SPR1 fill
-    0x0F00,              // 23  SPR2 outline
-    0x0000,              // 24  SPR2 unused
-    0x0FFF,              // 25  SPR2 fill
-    0x0F00,              // 26  SPR3 outline
-    0x0000,              // 27  SPR3 unused
-    0x0FFF,              // 28  SPR3 fill
-    // Slots 29-31: unused
-    0x0000, 0x0000, 0x0000,
+    0x0FFF,              // 17  pair0 body (white)
+    0x0CF,               // 18  pair0 accent (blue)
+    0x0CF,               // 19  pair0 overlay
+    0x0000,              // 20  spare
+    0x0FFF,              // 21  pair1 body (white)
+    0x0CF,               // 22  pair1 accent (blue)
+    0x0CF,               // 23  pair1 overlay
+    0x0000,              // 24  spare
+    0x0000,              // 25  pair2 body (black)
+    0xF00,               // 26  pair2 accent (red)
+    0x0CF,               // 27  pair2 overlay
+    0x0000,              // 28  spare
+    0x0000,              // 29  pair3 body (black)
+    0xF00,               // 30  pair3 accent (red)
+    0x0CF,               // 31  pair3 overlay
 };
 
 // ============================================================================
@@ -1622,6 +1632,15 @@ static __attribute__((interrupt)) void VBlankHandler() {
         g_PendingCop = 0;
     }
     custom->copjmp1 = 0;  // strobe: force copper to reload COP1LC immediately
+    // Set sprite pointers for all 8 channels (4 attached pairs)
+    if (g_SprData) {
+        for (int s = 0; s < 8; s++) {
+            ULONG addr = (ULONG)(g_SprData + s * SPR_CHAN_WORDS);
+            volatile USHORT* ptr = (volatile USHORT*)(0xDFF120 + s * 4);
+            ptr[0] = (USHORT)(addr >> 16);
+            ptr[1] = (USHORT)addr;
+        }
+    }
     g_FrameCounter++;
 }
 
@@ -1684,7 +1703,71 @@ static void BuildCopperListEx(USHORT* cop, const UBYTE** pf1_planes, const UBYTE
 // MAIN
 // ============================================================================
 
+static void UpdateSpriteData() {
+    // Mark all pairs as unused
+    for (int p = 0; p < SPR_MAX_PAIRS; p++)
+        g_SprPairShot[p] = -1;
+    // Assign active shots to sprite pairs
+    for (int i = 0; i < MAX_SHOTS; i++) {
+        if (!g_Shots[i].active) continue;
+        if (g_Shots[i].x > 126) continue;  // HSTART wraps at 8-bit
+        short basePair = (g_Shots[i].variant == 0) ? 0 : 2;
+        int pair = -1;
+        if (g_SprPairShot[basePair] < 0) pair = basePair;
+        else if (g_SprPairShot[basePair+1] < 0) pair = basePair + 1;
+        if (pair < 0) continue;
+        g_SprPairShot[pair] = i;
+        TShot* shot = &g_Shots[i];
+        short hstart = 129 + shot->x;
+        short vstart = 44 + shot->y;
+        UWORD pos = ((UWORD)vstart << 8) | ((UWORD)hstart & 0xFE);
+        UWORD vstop = (UWORD)(vstart + SPR_SHOT_ROWS) & 0x0F;
+        UWORD evenCtl = (vstop << 8) | ((((UWORD)vstart >> 8) & 1) << 7) | ((UWORD)hstart & 1);
+        UWORD oddCtl  = (vstop << 8) | (1 << 7) | ((UWORD)hstart & 1);
+        UWORD* even = g_SprData + pair * 2 * SPR_CHAN_WORDS;
+        UWORD* odd  = even + SPR_CHAN_WORDS;
+        even[0] = pos;  even[1] = evenCtl;
+        odd[0]  = pos;  odd[1]  = oddCtl;
+        short flip = g_FrameCounter & 1;
+        const UWORD* body   = g_ShotSpr_Body;
+        const UWORD* accent = g_ShotSpr_Accent;
+        if (flip) { const UWORD* t = body; body = accent; accent = t; }
+        for (int r = 0; r < SPR_SHOT_ROWS; r++) {
+            even[2+r] = body[r];
+            odd[2+r]  = accent[r];
+        }
+        even[10] = 0; even[11] = 0;
+        odd[10]  = 0; odd[11]  = 0;
+    }
+    // Mark unused pairs as off-screen (VSTART=300, in VBLANK area)
+    for (int p = 0; p < SPR_MAX_PAIRS; p++) {
+        if (g_SprPairShot[p] >= 0) continue;
+        UWORD* even = g_SprData + p * 2 * SPR_CHAN_WORDS;
+        UWORD* odd  = even + SPR_CHAN_WORDS;
+        USHORT offPos = ((USHORT)(300 & 0xFF) << 8);
+        USHORT offCtl = (((300 >> 8) & 1) << 7);
+        even[0] = offPos; even[1] = offCtl;
+        odd[0]  = offPos; odd[1]  = offCtl;
+    }
+    // Update sprite palette in g_Palette for attached pairs
+    for (int p = 0; p < SPR_MAX_PAIRS; p++) {
+        int idx = g_SprPairShot[p];
+        UWORD bodyColor, accentColor;
+        if (idx >= 0 && g_Shots[idx].variant == 0) {
+            bodyColor = 0xFFF; accentColor = 0x0CF;  // white shot
+        } else {
+            bodyColor = 0x000; accentColor = 0xF00;  // black shot
+        }
+        int baseReg = 17 + p * 4;
+        g_Palette[baseReg]   = bodyColor;
+        g_Palette[baseReg+1] = accentColor;
+        g_Palette[baseReg+2] = 0x0CF;  // overlay
+        if (baseReg + 3 < 32) g_Palette[baseReg+3] = 0;
+    }
+}
+
 static void RenderFrame(UBYTE* screen_mem) {
+    UpdateSpriteData();
     ClearGameArea(screen_mem);
     DrawBorder(screen_mem, g_BorderScrollY);
     if (g_StarsEnabled) {
@@ -1729,10 +1812,13 @@ static void RenderFrame(UBYTE* screen_mem) {
         }
         for (int i = 0; i < MAX_SHOTS; i++) {
             if (!g_Shots[i].active) continue;
+            // Check if this shot got a HW sprite slot — skip blitter
+            int hasSpr = 0;
+            for (int p = 0; p < SPR_MAX_PAIRS; p++)
+                if (g_SprPairShot[p] == i) { hasSpr = 1; break; }
+            if (hasSpr) continue;
             short flip = g_FrameCounter & 1;
             if (g_Shots[i].variant == 0) {
-                // Frame 0: accent→BPL2(white core), body→BPL6(blue glow)
-                // Frame 1: body→BPL2(white glow), accent→BPL6(blue core)
                 if (flip == 0) {
                     DrawBob16_2bpl(screen_mem, g_Shot16W_Mask, g_Shot16W_Accent, g_Shot16W_Body,
                                    g_Shots[i].x, g_Shots[i].y, 1, 5, 16);
@@ -1741,8 +1827,6 @@ static void RenderFrame(UBYTE* screen_mem) {
                                    g_Shots[i].x, g_Shots[i].y, 1, 5, 16);
                 }
             } else {
-                // Frame 0: accent→BPL4(black core), body→BPL2+OrBPL4(red glow)
-                // Frame 1: body→BPL4(black glow), accent→BPL2+OrBPL4(red core)
                 if (flip == 0) {
                     DrawBob16_2bpl(screen_mem, g_Shot16B_Mask, g_Shot16B_Accent, g_Shot16B_Body,
                                    g_Shots[i].x, g_Shots[i].y, 3, 1, 16);
@@ -1839,17 +1923,11 @@ int main() {
     }
     // (walls removed — 320px tilemap covers full screen)
 
-    // --- Hardware sprite data for enemy shots (16x8, in chip RAM) ---
-    #define HWSPR_H 8
-    static const UWORD g_HwSprData_src[(HWSPR_H+1)*2] = {
-        0x0180,0x0000, 0x03C0,0x0180, 0x07E0,0x03C0, 0x0FF0,0x07E0,
-        0x0FF0,0x07E0, 0x07E0,0x03C0, 0x03C0,0x0180, 0x0180,0x0000,
-        0x0000,0x0000
-    };
-    UWORD* g_HwSprData = (UWORD*)AllocMem(sizeof(g_HwSprData_src), MEMF_CHIP);
-    if (g_HwSprData) {
-        for (int i = 0; i < (HWSPR_H+1)*2; i++)
-            g_HwSprData[i] = g_HwSprData_src[i];
+    // --- Allocate HW sprite chip RAM (4 attached pairs × 2 channels × 12 words) ---
+    {
+        const ULONG sprDataSize = SPR_MAX_PAIRS * 2 * SPR_CHAN_WORDS * sizeof(UWORD);
+        g_SprData = (UWORD*)AllocMem(sprDataSize, MEMF_CHIP | MEMF_CLEAR);
+        for (int p = 0; p < SPR_MAX_PAIRS; p++) g_SprPairShot[p] = -1;
     }
 
     // --- Allocate double-buffered copper lists ---
@@ -1873,23 +1951,18 @@ int main() {
     custom->copjmp1 = 0x7fff;
     custom->dmacon = DMAF_SETCLR | DMAF_MASTER | DMAF_RASTER | DMAF_COPPER | DMAF_BLITTER | DMAF_SPRITE;
 
-    // --- Init hardware sprite pointers (DMA 0-3, enemy shots) ---
-    {
-        ULONG addr = (ULONG)g_HwSprData;
-        USHORT hw = (USHORT)(addr >> 16);
-        USHORT lw = (USHORT)addr;
-        for (int s = 0; s < 4; s++) {
+    // Init sprite pointers (VBlank handler will update per frame)
+    if (g_SprData) {
+        for (int s = 0; s < 8; s++) {
             volatile USHORT* ptr = (volatile USHORT*)(0xDFF120 + s*4);
-            ptr[0] = hw;
-            ptr[1] = lw;
+            ULONG addr = (ULONG)(g_SprData + s * SPR_CHAN_WORDS);
+            ptr[0] = (USHORT)(addr >> 16);
+            ptr[1] = (USHORT)addr;
+            volatile USHORT* pos = (volatile USHORT*)(0xDFF140 + s*8);
+            pos[0] = (USHORT)(256 << 8);  // off-screen
+            pos[1] = 0;
         }
     }
-    for (int s = 0; s < 4; s++) {
-        volatile USHORT* pos = (volatile USHORT*)(0xDFF140 + s*8);
-        pos[0] = (USHORT)(256 << 8);
-        pos[1] = 0;
-    }
-
 
     // Install VBlank interrupt
     SetInterruptHandler((APTR)VBlankHandler);

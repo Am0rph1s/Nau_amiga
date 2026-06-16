@@ -1,0 +1,80 @@
+# Project: nau_dx_amiga — Ikaruga-style OCS Amiga shooter
+
+## Goal
+OCS Amiga (68000) shmup with 1 MB RAM. Implements Ikaruga-style polarity mechanics (white/black), hardware sprite multiplexing for player shots, blitter fallback.
+
+## Build
+VS Code extension: **Amiga C/C++ Compile, Debug & Profile** (bartman). Per compilar, obre la paleta de comandos i executa "Amiga: Build" o usa `Ctrl+Shift+B`. Alternativament: `m68k-amiga-elf-gcc -Ofast -flto -fwhole-program`, `gnumake`, `elf2hunk`, `exe2adf`.
+
+## SPR Register Encoding (OCS — Amiga Hardware Reference Manual 3rd ed.)
+
+### SPRxPOS (write-only, $dff140 + 8*n)
+- `[15:8]` = VSTART[7:0]
+- `[7:0]` = HSTART[7:1] (bit 0 sempre 0) → `hstart & 0xFE`
+
+### SPRxCTL (write-only, $dff142 + 8*n)
+- `[11:8]` = VSTOP[3:0] (4 bits a OCS, compare amb scanline[3:0]) → `(vstart + SHOT_H) & 0x0F`
+- `[7]` = VSTART[8] (parell) / ATT (senar) → `((vstart>>8)&1)<<7` o `(1<<7)` per attach
+- `[0]` = HSTART[0] (LSB) → `hstart & 1`
+- `[15]` = **NO USAT a OCS** — no posar ATT aquí!
+- `[6]` = VSTOP[4] (ECS/AGA, ignorat a OCS)
+
+### Chip-RAM CTL (mateix format que el registre HW)
+- **Parell**: bit 7 = VSTART[8], ATT es llegeix del SENAR
+- **Senar**: bit 7 = ATT=1 per attach. VSTART[8] del senar ignora (el parell controla el pair)
+- El DMA del canal parell llegeix el CTL del senar via ATT=1 i combina les dades
+
+## Architecture
+- **6 bitplanes**: PF1 (bg, 3 planes) + PF2 (game sprites, 3 planes)
+- **Copper list**: double-buffered 1024 bytes, rebuilt each frame
+- **Sprites**: OCS attached pairs for player shots (max 4 simultaneous per frame, blitter fallback)
+- **VBlank handler**: resets all sprite pointers + POS/CTL, swaps copper list
+
+## OCS Sprite System
+
+### Attached Pairs (ATTACH=1)
+- **4 pairs**: ch 0+1 (white), 2+3 (white), 4+5 (black), 6+7 (black)
+- Even channel = plane 0 (body), Odd channel = plane 1 (accent)
+- Chip RAM per channel: 12 words (POS, CTL, 8 data words, terminator×2)
+- `UpdateSpriteData()` fills per-pair chip-RAM data
+
+### Sprite Palette Colors
+- Paired sprite: even data = plane 0, odd data = plane 1
+- Pixel encoding: 00=transparent, 01=body, 10=accent, 11=overlay
+- Color registers: `COLOR(17+4n)` for body, `COLOR(18+4n)` for accent, `COLOR(19+4n)` for overlay, where n = pair index (0-3)
+
+### VBlank Handler
+- Sets SPRxPTH/PTL for all 8 channels
+- Even channels: SPRxPOS=0, SPRxCTL=VSTOP=8 → triggers DMA at scanline 0
+- Odd channels: SPRxPOS=0, SPRxCTL=VSTOP=8, ATT=1 → attaches to even (pulled by even DMA)
+
+### DMA Re-read at Scanline 0
+1. VBlank sets SPRxPOS/CTL in hardware registers
+2. Even channel VSTART=0 matches beam counter at scanline 0
+3. DMA reads POS+CTL from chip RAM (even CTL has VSTART[8]+HSTART[0])
+4. Odd chip RAM has ATT=1 → DMA attaches and reads odd data (even=body, odd=accent)
+5. 8 data words read (one per scanline), then terminator (0x0000) stops DMA
+
+### Palette (Sprite Colors)
+- Formula: Pair `n` → `COLOR(17+4n)` for pixel 01 (body), `COLOR(18+4n)` for pixel 10 (accent), `COLOR(19+4n)` for pixel 11 (overlay)
+- White (pairs 0-1): body=0xFFF, accent=0x0CF
+- Black (pairs 2-3): body=0x000, accent=0xF00
+- Runtime alternation flips body↔accent per frame for visual effect
+- `g_Palette[32]` (indices 0-31); copper writes COLOR00-31 each frame
+
+### Slot Assignment
+- Each shot evaluates: `basePair = (variant==0) ? 0 : 2`, iterates 2 pairs of matching polarity
+- Rejects `x > 126` (HSTART overflow with 8-bit OCS)
+- `g_SprInstCount` max 4 (one per pair)
+- Remaining shots fall back to blitter `DrawBob16_2bpl`
+
+### Constraints
+- HSTART = 129 + screen_x; `screen_x > 126` wraps (8-bit)
+- VSTOP in chip RAM CTL = `(vstart + SHOT_H) & 0x0F` (only 4 bits on OCS)
+- Copper NEVER touches sprite registers (DMA overrides at VSTART trigger)
+
+## Key Files
+- **main.c**: game loop, VBlank handler, UpdateSpriteData, copper builder
+- **gfx.h**: shot sprite bitmaps (g_Shot_Body[8], g_Shot_Accent[8]), SHOT_SPR_WORDS=12
+- **blitter.s**: DrawBob16d2Asm assembly blitter routine
+- **nau_dx.h**: SHOT_H=8, SHOT_W=4, MAX_SHOTS=24
