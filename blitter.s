@@ -28,7 +28,7 @@ ClearGameAreaAsm:
 | Only clears bytes 8-31 (12 words per row, 256 rows, 3 planes).
 | Stack: +4=return, +8=screen_mem
         movem.l d0-d2/a0-a2,-(sp)
-        move.l  24(sp),a0               | a0 = screen_mem
+        move.l  28(sp),a0               | a0 = screen_mem (+4:ret, +24:6 regs×4)
         lea     CUSTOM,a1
 
         | Setup blitter once for all 3 planes
@@ -92,6 +92,13 @@ ClearGameAreaAsm:
         swap    d0
         move.w  d0,BLTDPTL(a1)
         move.w  d2,BLTSIZE(a1)
+.cga_wait4:
+        move.w  DMACONR(a1),d0
+        btst    #14,d0
+        bne.s   .cga_wait4
+        move.w  DMACONR(a1),d0
+        btst    #14,d0
+        bne.s   .cga_wait4
 
         movem.l (sp)+,d0-d2/a0-a2
         rts
