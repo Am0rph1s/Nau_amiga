@@ -1766,7 +1766,7 @@ static void UpdateSpriteData(UWORD* sprData) {
         TShot* shot = &g_Shots[i];
         short hstart = 129 + shot->x;
         short vstart = 44 + shot->y;
-        UWORD pos = ((UWORD)vstart << 8) | ((UWORD)hstart & 0xFE);
+        UWORD pos = ((UWORD)vstart << 8) | ((UWORD)((hstart >> 1) & 0xFF));
         UWORD vstop = (UWORD)(vstart + SPR_SHOT_ROWS) & 0x0F;
         UWORD evenCtl = (vstop << 8) | ((((UWORD)vstart >> 8) & 1) << 7) | ((UWORD)hstart & 1);
         UWORD oddCtl  = (vstop << 8) | (1 << 7) | ((UWORD)hstart & 1);

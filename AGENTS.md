@@ -33,7 +33,7 @@ VS Code extension: **Amiga C/C++ Compile, Debug & Profile** (bartman). Per compi
 ## OCS Sprite System
 
 ### Attached Pairs (ATTACH=1)
-- **4 pairs**: ch 0+1 (white), 2+3 (white), 4+5 (black), 6+7 (black)
+- **4 pairs**: ch 0+1, 2+3, 4+5, 6+7 (paired as per OCS sprite hardware)
 - Even channel = plane 0 (body), Odd channel = plane 1 (accent)
 - Chip RAM per channel: 12 words (POS, CTL, 8 data words, terminator×2)
 - `UpdateSpriteData()` fills per-pair chip-RAM data
