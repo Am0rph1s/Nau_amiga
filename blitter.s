@@ -10,99 +10,55 @@
         .equ    BLTDPTH,  0x054
         .equ    BLTDPTL,  0x056
         .equ    BLTSIZE,  0x058
-        .equ    BLTDMOD,  0x062
+        .equ    BLTADAT,  0x074
+        .equ    BLTBDAT,  0x072
+        .equ    BLTCDAT,  0x070
+        .equ    DMACON,   0x096
+        .equ    BLTDMOD,  0x066
 
         .text
 
-| ============================================================
-| void WaitBlitter(void)
-| Polls DMACONR bit 14 (BBUSY) until blitter is idle.
-| Double-read workaround for A500/A1000 hardware bug.
-| Clobbers d0.
-| ============================================================
-        .global WaitBlitter
         .global ClearGameAreaAsm
 ClearGameAreaAsm:
-| Clear planes 1,3,5 (PF2) — skip border bytes 0-7 and 32-39 (DrawBorder overwrites them)
-| Uses blitter D-channel zero-fill (USED=1, LF=0 → D=0).
-| Only clears bytes 8-31 (12 words per row, 256 rows, 3 planes).
+| Clear PF2 planes 1,3,5 center (bytes 8-31 = 24 bytes) — CPU movem.l.
+| Blitter DMA contention amb 6 bitplanes el fa 300× més lent que CPU aquí.
 | Stack: +4=return, +8=screen_mem
-        movem.l d0-d2/a0-a2,-(sp)
-        move.l  28(sp),a0               | a0 = screen_mem (+4:ret, +24:6 regs×4)
-        lea     CUSTOM,a1
+        movem.l d0-d7,-(sp)             | 8 regs = 32 bytes
+        move.l  36(sp),a0               | a0 = screen_mem
 
-        | Wait for any previous blit (force field, etc.) before touching registers
-.cga_wait0:
-        move.w  DMACONR(a1),d0
-        btst    #14,d0
-        bne.s   .cga_wait0
-        move.w  DMACONR(a1),d0
-        btst    #14,d0
-        bne.s   .cga_wait0
+        moveq   #0,d0
+        move.l  d0,d1
+        move.l  d0,d2
+        move.l  d0,d3
+        move.l  d0,d4
+        move.l  d0,d5
 
-        | Setup blitter once for all 3 planes
-        move.w  #0x0100,BLTCON0(a1)     | USED=1 (bit 8), LF=0 → D = zero
-        move.w  #0,BLTCON1(a1)
-        move.w  #0xFFFF,BLTAFWM(a1)
-        move.w  #0xFFFF,BLTALWM(a1)
-        | DMOD = 40 - 24 = 16: after writing 24 bytes, skip to next row
-        move.w  #16,BLTDMOD(a1)
-        | BLTSIZE = (255 << 6) | (12-1) = 0x3FCB
-        move.w  #0x3FCB,d2
+        | --- Plane 1 (BPL2) = screen + 10248 ---
+        lea     10248(a0),a1
+        move.w  #255,d6
+.cga_p1:
+        movem.l d0-d5,(a1)
+        lea     40(a1),a1
+        dbra    d6,.cga_p1
 
-        | --- Plane 1 (BPL2) = screen + 10240 + 8 ---
-        lea     10240(a0),a2
-        addq.l  #8,a2
-        move.l  a2,d0
-        swap    d0
-        move.w  d0,BLTDPTH(a1)
-        swap    d0
-        move.w  d0,BLTDPTL(a1)
-        move.w  d2,BLTSIZE(a1)
+        | --- Plane 3 (BPL4) = screen + 30728 ---
+        lea     30728(a0),a1
+        move.w  #255,d6
+.cga_p3:
+        movem.l d0-d5,(a1)
+        lea     40(a1),a1
+        dbra    d6,.cga_p3
 
-        | --- Plane 3 (BPL4) = screen + 30720 + 8 ---
-        lea     30720(a0),a2
-        addq.l  #8,a2
-.cga_wait2:
-        move.w  DMACONR(a1),d0
-        btst    #14,d0
-        bne.s   .cga_wait2
-        move.w  DMACONR(a1),d0
-        btst    #14,d0
-        bne.s   .cga_wait2
-        move.l  a2,d0
-        swap    d0
-        move.w  d0,BLTDPTH(a1)
-        swap    d0
-        move.w  d0,BLTDPTL(a1)
-        move.w  d2,BLTSIZE(a1)
+        | --- Plane 5 (BPL6) = screen + 51208 ---
+        lea     30720(a0),a1
+        lea     20488(a1),a1
+        move.w  #255,d6
+.cga_p5:
+        movem.l d0-d5,(a1)
+        lea     40(a1),a1
+        dbra    d6,.cga_p5
 
-        | --- Plane 5 (BPL6) = screen + 5*10240 + 8 = screen + 51200 + 8 ---
-        move.l  a0,a2
-        add.l   #51200,a2
-        addq.l  #8,a2
-.cga_wait3:
-        move.w  DMACONR(a1),d0
-        btst    #14,d0
-        bne.s   .cga_wait3
-        move.w  DMACONR(a1),d0
-        btst    #14,d0
-        bne.s   .cga_wait3
-        move.l  a2,d0
-        swap    d0
-        move.w  d0,BLTDPTH(a1)
-        swap    d0
-        move.w  d0,BLTDPTL(a1)
-        move.w  d2,BLTSIZE(a1)
-.cga_wait4:
-        move.w  DMACONR(a1),d0
-        btst    #14,d0
-        bne.s   .cga_wait4
-        move.w  DMACONR(a1),d0
-        btst    #14,d0
-        bne.s   .cga_wait4
-
-        movem.l (sp)+,d0-d2/a0-a2
+        movem.l (sp)+,d0-d7
         rts
 
 

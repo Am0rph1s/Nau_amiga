@@ -11,7 +11,8 @@
 #define SCREEN_H        256
 #define SCREEN_BPL      6       // 6 bitplanes -> dual-playfield 3+3 (8+8 colors)
 
-// Layout: [wall_L 16px][game 256px][wall_R 16px][HUD 32px]
+// Layout: [HUD 32px top][wall_L 16px][game 256px][wall_R 16px]
+#define HUD_H           32
 #define WALL_L_X        0
 #define WALL_L_W        16
 #define GAME_X0         16
@@ -22,8 +23,8 @@
 #define HUD_X           272
 #define HUD_W           48
 
-// --- Player ship (Animated 32x24) -------------------------------------------
-#define SHIP_W          32
+// --- Player ship (18x24) ----------------------------------------------------
+#define SHIP_W          18
 #define SHIP_H          24
 #define SHIP_SPEED_X    8
 #define SHIP_SPEED_Y    8
@@ -33,9 +34,9 @@
 #define SHIP_MAX_Y      (GAME_H - SHIP_H - 8)
 #define SHIP_SPAWN_X    (GAME_X0 + GAME_W/2 - SHIP_W/2)
 #define SHIP_SPAWN_Y    (GAME_H - SHIP_H - 32)
-#define SHIP_HIT_OX     6
+#define SHIP_HIT_OX     3
 #define SHIP_HIT_OY     6
-#define SHIP_HIT_W      (SHIP_W - 12)
+#define SHIP_HIT_W      (SHIP_W - 6)
 #define SHIP_HIT_H      (SHIP_H - 12)
 
 // --- Player shots -----------------------------------------------------------

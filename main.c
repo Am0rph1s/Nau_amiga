@@ -498,7 +498,7 @@ static void DrawPixel(UBYTE* screen_mem, short x, short y, UBYTE colorIdx) {
 // Pol B (colorMode=1): p0→BPL2(blanc), p1→BPL2+BPL4(vermell via reg 11), p2→BPL4(negre)
 //   p1 OR'd a BPL2 i BPL4 perque no solapa amb p0/p2.
 static void DrawShipAnim(UBYTE* screen_mem, short x, short y, UBYTE colorMode) {
-    if (x <= -32 || x >= SCREEN_W || y <= -24 || y >= SCREEN_H) return;
+    if (x <= -(short)SHIP_W_WIDTH || x >= SCREEN_W || y <= -(short)SHIP_W_HEIGHT || y >= SCREEN_H) return;
     UWORD shift = (UWORD)(x & 15);
     UWORD rows  = SHIP_W_HEIGHT;
     UWORD skip  = 0;
@@ -1696,7 +1696,8 @@ static __attribute__((interrupt)) void VBlankHandler() {
 // ============================================================================
 
 
-static void BuildCopperListEx(USHORT* cop, const UBYTE** pf1_planes, const UBYTE** pf2_planes, short scroll_y) {
+static void BuildCopperListEx(USHORT* cop, const UBYTE** hud_planes,
+                              const UBYTE** bg_planes, const UBYTE** pf2_planes, short scroll_y) {
     const USHORT x     = 129;
     const USHORT width = 320;
     const USHORT height= 256;
@@ -1720,23 +1721,34 @@ static void BuildCopperListEx(USHORT* cop, const UBYTE** pf1_planes, const UBYTE
     cop = copSetReg(cop, 0x108, 0);                                // BPL1MOD
     cop = copSetReg(cop, 0x10A, 0);                                // BPL2MOD
 
-    // PF1: BPL1, BPL3, BPL5 — from bg_buf with vertical scroll
-    // PF2: BPL2, BPL4, BPL6 — from draw_buf (no scroll)
+    // --- PF1: HUD (top 32 lines), PF2: game buffer ---
     // Absolute copper register addresses (0x0E0 = BPL1PTH, 0x0E8 = BPL3PTH, 0x0F0 = BPL5PTH)
     //                           (0x0E4 = BPL2PTH, 0x0EC = BPL4PTH, 0x0F4 = BPL6PTH)
     static const USHORT pf1_regs[3] = { 0x0E0, 0x0E8, 0x0F0 };
     static const USHORT pf2_regs[3] = { 0x0E4, 0x0EC, 0x0F4 };
     for (int i = 0; i < 3; i++) {
-        ULONG addr_pf1 = (ULONG)pf1_planes[i] + scroll_y * ROW_BYTES;
+        ULONG addr_hud = (ULONG)hud_planes[i];
         ULONG addr_pf2 = (ULONG)pf2_planes[i];
         *cop++ = pf1_regs[i];
-        *cop++ = (UWORD)(addr_pf1 >> 16);
+        *cop++ = (UWORD)(addr_hud >> 16);
         *cop++ = pf1_regs[i] + 2;
-        *cop++ = (UWORD)addr_pf1;
+        *cop++ = (UWORD)addr_hud;
         *cop++ = pf2_regs[i];
         *cop++ = (UWORD)(addr_pf2 >> 16);
         *cop++ = pf2_regs[i] + 2;
         *cop++ = (UWORD)addr_pf2;
+    }
+
+    // Wait for scanline 76 = y + HUD_H (first line after HUD area)
+    cop = copWaitY(cop, y + HUD_H);
+
+    // PF1: switch to scrolled background
+    for (int i = 0; i < 3; i++) {
+        ULONG addr_bg = (ULONG)bg_planes[i] + scroll_y * ROW_BYTES;
+        *cop++ = pf1_regs[i];
+        *cop++ = (UWORD)(addr_bg >> 16);
+        *cop++ = pf1_regs[i] + 2;
+        *cop++ = (UWORD)addr_bg;
     }
 
     for (int i = 0; i < 32; i++)
@@ -1830,6 +1842,110 @@ static void UpdateSpriteData(UWORD* sprData) {
     }
 }
 
+static void ClearHudArea(UBYTE* screen_mem) {
+    UBYTE* pf2_bases[3] = {
+        screen_mem + 1 * PLANE_BYTES,
+        screen_mem + 3 * PLANE_BYTES,
+        screen_mem + 5 * PLANE_BYTES
+    };
+    for (int pl = 0; pl < 3; pl++) {
+        memset(pf2_bases[pl], 0, HUD_H * ROW_BYTES);
+    }
+}
+
+// 3×5 bitmap font (bits 7,6,5 = left,middle,right pixel)
+static const UBYTE font_3x5[10][5] = {
+    {0xE0,0xA0,0xA0,0xA0,0xE0}, // 0
+    {0x40,0xC0,0x40,0x40,0xE0}, // 1
+    {0xE0,0x20,0xE0,0x80,0xE0}, // 2
+    {0xE0,0x20,0xE0,0x20,0xE0}, // 3
+    {0xA0,0xA0,0xE0,0x20,0x20}, // 4
+    {0xE0,0x80,0xE0,0x20,0xE0}, // 5
+    {0xE0,0x80,0xE0,0xA0,0xE0}, // 6
+    {0xE0,0x20,0x20,0x20,0x20}, // 7
+    {0xE0,0xA0,0xE0,0xA0,0xE0}, // 8
+    {0xE0,0xA0,0xE0,0x20,0xE0}, // 9
+};
+
+static void HudSetPixel(UBYTE* buf, ULONG hp, short hx, short hy, UBYTE col) {
+    if ((UWORD)hx >= SCREEN_W || (UWORD)hy >= HUD_H) return;
+    UWORD offs = (UWORD)(hy * ROW_BYTES + (hx >> 3));
+    UBYTE m = (UBYTE)(0x80 >> (hx & 7));
+    for (int pl = 0; pl < 3; pl++) {
+        UBYTE* p = buf + pl * hp + offs;
+        if (col & (1 << pl)) *p |= m; else *p &= ~m;
+    }
+}
+
+static void DrawHudDigit(UBYTE* buf, ULONG hp, short hx, short hy, UBYTE col, UBYTE ch) {
+    if (ch < '0' || ch > '9') return;
+    const UBYTE* pat = font_3x5[ch - '0'];
+    for (int r = 0; r < 5; r++)
+        for (int px = 0; px < 3; px++)
+            if (pat[r] & (0x80 >> px))
+                HudSetPixel(buf, hp, (short)(hx + px), (short)(hy + r), col);
+}
+
+static void DrawHudNumber(UBYTE* buf, ULONG hp, short hx, short hy, UBYTE col, unsigned short num) {
+    char d[6]; int n = 0;
+    if (num == 0) { d[n++] = '0'; }
+    else { while (num && n < 6) { d[n++] = (char)('0' + num % 10); num /= 10; } }
+    for (int i = n - 1; i >= 0; i--) {
+        DrawHudDigit(buf, hp, hx, hy, col, (UBYTE)d[i]);
+        hx = (short)(hx + 4); // 3 wide + 1 gap
+    }
+}
+
+static void DrawHud(UBYTE* buf, ULONG hp) {
+    // Clear HUD buffer
+    for (int pl = 0; pl < 3; pl++)
+        memset(buf + pl * hp, 0, hp);
+
+    // Separator line at y=31 (color 6 = planes 1+2)
+    UBYTE sep_col = 6;
+    for (int hx = 0; hx < SCREEN_W; hx++) {
+        UWORD offs = (UWORD)(31 * ROW_BYTES + (hx >> 3));
+        UBYTE m = (UBYTE)(0x80 >> (hx & 7));
+        for (int pl = 0; pl < 3; pl++)
+            if (sep_col & (1 << pl))
+                buf[pl * hp + offs] |= m;
+    }
+
+    // Score at (8, 4), right-aligned, color 7
+    short sx = 8;
+    // Draw "S" manually as 3x5: 111, 100, 111, 001, 111
+    UBYTE sdata[5] = {0xE0,0x80,0xE0,0x20,0xE0};
+    for (int r = 0; r < 5; r++)
+        for (int px = 0; px < 3; px++)
+            if (sdata[r] & (0x80 >> px))
+                HudSetPixel(buf, hp, (short)(sx + px), (short)(4 + r), 7);
+    DrawHudNumber(buf, hp, (short)(sx + 16), 4, 7, g_Score);
+
+    // Lives at (8, 14)
+    // Draw "L" as 3x5: 100, 100, 100, 100, 111
+    UBYTE ldata[5] = {0x80,0x80,0x80,0x80,0xE0};
+    for (int r = 0; r < 5; r++)
+        for (int px = 0; px < 3; px++)
+            if (ldata[r] & (0x80 >> px))
+                HudSetPixel(buf, hp, (short)(sx + px), (short)(14 + r), 7);
+    DrawHudNumber(buf, hp, (short)(sx + 8), 14, 7, (unsigned short)g_Lives);
+
+    // Polarity indicator at (280, 4)
+    UBYTE pol_col = (g_ShipPolarity == 0) ? 7 : 1; // white or blue
+    for (int py = 0; py < 8; py++)
+        for (int px = 0; px < 8; px++)
+            HudSetPixel(buf, hp, (short)(280 + px), (short)(4 + py), pol_col);
+
+    // Chain dots at (250, 14)
+    for (int i = 0; i < 3; i++) {
+        short dx = (short)(250 + i * 10);
+        for (int py = 0; py < 4; py++)
+            for (int px = 0; px < 4; px++)
+                if (i < g_AbsorbCount)
+                    HudSetPixel(buf, hp, (short)(dx + px), (short)(14 + py), g_ShipPolarity ? 7 : 1);
+    }
+}
+
 static void RenderFrame(UBYTE* screen_mem) {
     UpdateSpriteData(g_SprDataBuild);
     g_SprDataPending = g_SprDataBuild;
@@ -1918,21 +2034,8 @@ static void RenderFrame(UBYTE* screen_mem) {
             DrawBob16(screen_mem, g_ExpMasks[fr], g_ExpData[fr], ex->x, ex->y, 0x03, 8);
         }
 
-        // HUD: absorption chain display. 3 small dots in the top-right corner.
-        // Always white (reg 9 = 0x0FFF via BPL2), visible against black bg.
-        {
-            UBYTE dotColor = 0x01;  // BPL2 only = white
-            short baseX = HUD_X + 8;
-            short baseY = 8;
-            for (int i = 0; i < CHAIN_MAX; i++) {
-                short dx = (short)(baseX + i * 10);
-                UBYTE c = (i < g_AbsorbCount) ? dotColor : 0x00;
-                for (int py = 0; py < 4; py++)
-                    for (int px = 0; px < 4; px++)
-                        DrawPixel(screen_mem, (short)(dx + px), (short)(baseY + py), c);
-            }
-        }
     }
+    ClearHudArea(screen_mem);
 }
 
 int main() {
@@ -1967,9 +2070,14 @@ int main() {
     UBYTE* draw_buf = screen_mem;
     UBYTE* show_buf = screen_mem + buf_size;
 
+    // --- Allocate HUD buffer (PF1 only, 3 planes × HUD_H rows) ---
+    const ULONG hud_plane_bytes = ROW_BYTES * HUD_H;
+    UBYTE* hud_buf = (UBYTE*)AllocMem(hud_plane_bytes * BG_BPL, MEMF_CHIP | MEMF_CLEAR);
+    if (!hud_buf) { FreeMem(screen_mem, buf_size * 2); CloseLibrary((struct Library*)DOSBase); CloseLibrary((struct Library*)GfxBase); Exit(0); }
+
     // --- Allocate pre-rendered background buffer (PF1 only, 3 planes × 1024 rows) ---
     UBYTE* bg_buf = (UBYTE*)AllocMem(BG_PLANE_BYTES * BG_BPL, MEMF_CHIP | MEMF_CLEAR);
-    if (!bg_buf) { FreeMem(screen_mem, buf_size * 2); CloseLibrary((struct Library*)DOSBase); CloseLibrary((struct Library*)GfxBase); Exit(0); }
+    if (!bg_buf) { FreeMem(screen_mem, buf_size * 2); FreeMem(hud_buf, hud_plane_bytes * BG_BPL); CloseLibrary((struct Library*)DOSBase); CloseLibrary((struct Library*)GfxBase); Exit(0); }
     InitTilemapBG(bg_buf);
     // Copy first 256 rows to end for seamless wrap scrolling
     for (int bpl = 0; bpl < BG_BPL; bpl++) {
@@ -1981,6 +2089,9 @@ int main() {
         }
     }
     // (walls removed — 320px tilemap covers full screen)
+
+    // --- Initialize HUD content ---
+    DrawHud(hud_buf, hud_plane_bytes);
 
     // --- Allocate HW sprite chip RAM (4 attached pairs × 2 channels × 12 words) ---
     {
@@ -2014,11 +2125,12 @@ int main() {
     TakeSystem();
     WaitVbl();
 
-    // Build initial copper list: PF1 from bg_buf (scroll=0), PF2 from show_buf
+    // Build initial copper list: HUD + PF2 from show_buf, PF1 from bg_buf (scroll=0)
     {
+        const UBYTE* hud[3] = { hud_buf + 0*hud_plane_bytes, hud_buf + 1*hud_plane_bytes, hud_buf + 2*hud_plane_bytes };
         const UBYTE* pf1[3] = { bg_buf + 0*BG_PLANE_BYTES, bg_buf + 1*BG_PLANE_BYTES, bg_buf + 2*BG_PLANE_BYTES };
         const UBYTE* pf2[3] = { show_buf + 1*plane_size, show_buf + 3*plane_size, show_buf + 5*plane_size };
-        BuildCopperListEx(cop_show, pf1, pf2, 0);
+        BuildCopperListEx(cop_show, hud, pf1, pf2, 0);
     }
     custom->cop1lc = (ULONG)cop_show;
     custom->dmacon = DMAF_BLITTER;
@@ -2059,11 +2171,15 @@ int main() {
         // Render next frame (copper is showing show_buf, NOT draw_buf)
         RenderFrame(draw_buf);
 
+        // Redraw HUD each frame
+        DrawHud(hud_buf, hud_plane_bytes);
+
         // Build copper: PF1 from bg_buf (with scroll), PF2 from draw_buf
         {
             const UBYTE* pf1[3] = { bg_buf + 0*BG_PLANE_BYTES, bg_buf + 1*BG_PLANE_BYTES, bg_buf + 2*BG_PLANE_BYTES };
-            const UBYTE* pf2[3] = { draw_buf + 1*plane_size, draw_buf + 3*plane_size, draw_buf + 5*plane_size };
-            BuildCopperListEx(cop_build, pf1, pf2, g_BGScrollY);
+        const UBYTE* hud[3] = { hud_buf + 0*hud_plane_bytes, hud_buf + 1*hud_plane_bytes, hud_buf + 2*hud_plane_bytes };
+        const UBYTE* pf2[3] = { draw_buf + 1*plane_size, draw_buf + 3*plane_size, draw_buf + 5*plane_size };
+        BuildCopperListEx(cop_build, hud, pf1, pf2, g_BGScrollY);
         }
         // Schedule copper swap at next VBlank
         { USHORT* tmp = cop_build; cop_build = cop_show; cop_show = tmp; }
@@ -2345,6 +2461,7 @@ int main() {
     FreeSystem();
 
     FreeMem(screen_mem, buf_size * 2);
+    FreeMem(hud_buf, hud_plane_bytes * BG_BPL);
     FreeMem(bg_buf, BG_PLANE_BYTES * BG_BPL);
     FreeMem(copper1, 1024);
     FreeMem(copper2, 1024);
