@@ -582,7 +582,7 @@ static void DrawShipAnim(UBYTE* screen_mem, short x, short y, UBYTE colorMode) {
 
 // Force field: circular ring (1 BPL thick) drawn into BPL6 of PF2.
 // All ring masks are 32x32 with the ring centered at (15,15). When drawn at
-// (g_ShipX-15, g_ShipY-12) the ring's center coincides with the ship's center.
+// (g_ShipX-7, g_ShipY-4) centers the 32x32 force field on the 18x24 ship (ship center = shipX+9, shipY+12).
 // Visible color is g_Palette[12] (PF2 color 4 = BPL6=1).
 //
 // g_FFBubScroll0..3: banded-dither disc (r=22) that scrolls vertically.
@@ -601,17 +601,6 @@ static void DrawShipAnim(UBYTE* screen_mem, short x, short y, UBYTE colorMode) {
 #define FORCEFIELD_H 32
 
 #include "tools/ff_masks_32x32.h"
-
-static const UWORD* const g_FFSweepSrcSet[4] = {
-    g_FFSweepSrc0, g_FFSweepSrc1, g_FFSweepSrc2, g_FFSweepSrc3
-};
-static const UWORD* const g_FFSweepDstSet[4] = {
-    g_FFSweepDst0, g_FFSweepDst1, g_FFSweepDst2, g_FFSweepDst3
-};
-
-static const UWORD* const g_FFBubScrollSet[4] = {
-    g_FFBubScroll0, g_FFBubScroll1, g_FFBubScroll2, g_FFBubScroll3
-};
 
 // g_FrameCounter must be declared before DrawForceField uses it (for the
 // scrolling-bubble animation). The real definition is here so the function
@@ -667,8 +656,8 @@ static void DrawForceFieldMask2(UBYTE* screen_mem, short x, short y,
 //                                              dest BPL6 (blue) sweeping in.
 static void DrawForceField(UBYTE* screen_mem, short shipX, short shipY,
                            short transition, short sweepDir, short polarity) {
-    short mx = (short)(shipX - 15);
-    short my = (short)(shipY - 12);
+    short mx = (short)(shipX - 7);
+    short my = (short)(shipY - 4);
 
     if (transition > 0) {
         short phase = 4 - transition;
