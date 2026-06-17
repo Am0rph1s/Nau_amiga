@@ -767,7 +767,7 @@ DrawBob16d2Asm:
 | int DrawForceFieldMaskAsm(void* screen_mem, short x, short y,
 |                           const UWORD* mask, int planeIdx)
 |
-| Fast-path for fully-visible 48x48 masks ORed into one bitplane.
+| Fast-path for fully-visible 32x32 masks ORed into one bitplane.
 | Returns 0 on success, 1 if the C clipping fallback is needed.
 | Stack after movem (40 bytes): +44=screen, +50=x, +54=y, +56=mask, +62=planeIdx
 | ============================================================
@@ -784,11 +784,11 @@ DrawForceFieldMaskAsm:
         | Fully-visible fast path only.
         tst.w   d7
         bmi     .ffm_fail
-        cmpi.w  #272,d7
+        cmpi.w  #288,d7
         bgt     .ffm_fail
         tst.w   d6
         bmi     .ffm_fail
-        cmpi.w  #208,d6
+        cmpi.w  #224,d6
         bgt     .ffm_fail
 
         | a0 = screen_mem + planeIdx * 10240
@@ -812,7 +812,7 @@ DrawForceFieldMaskAsm:
         andi.w  #15,d4                 | shift
         moveq   #16,d5
         sub.w   d4,d5                  | invShift = 16 - shift
-        move.w  #47,d3                 | 48 rows
+        move.w  #31,d3                 | 32 rows
 
         tst.w   d4
         beq.s   .ffm_zero_loop
@@ -820,7 +820,6 @@ DrawForceFieldMaskAsm:
 .ffm_shift_loop:
         move.w  (a3)+,d0               | m0
         move.w  (a3)+,d1               | m1
-        move.w  (a3)+,d6               | m2
 
         move.w  d0,d7                  | mv0 = m0 >> shift
         lsr.w   d4,d7
@@ -832,14 +831,9 @@ DrawForceFieldMaskAsm:
         or.w    d7,d0
         or.w    d0,2(a0,d2.w)
 
-        lsl.w   d5,d1                  | mv2 = (m1 << invShift) | (m2 >> shift)
-        move.w  d6,d7
-        lsr.w   d4,d7
-        or.w    d7,d1
-        or.w    d1,4(a0,d2.w)
-
-        lsl.w   d5,d6                  | spill = m2 << invShift
-        or.w    d6,6(a0,d2.w)
+        move.w  d1,d6                  | mv2 = m1 << invShift
+        lsl.w   d5,d6
+        or.w    d6,4(a0,d2.w)
 
         addi.w  #40,d2
         dbra    d3,.ffm_shift_loop
@@ -848,10 +842,8 @@ DrawForceFieldMaskAsm:
 .ffm_zero_loop:
         move.w  (a3)+,d0
         move.w  (a3)+,d1
-        move.w  (a3)+,d6
         or.w    d0,(a0,d2.w)
         or.w    d1,2(a0,d2.w)
-        or.w    d6,4(a0,d2.w)
         addi.w  #40,d2
         dbra    d3,.ffm_zero_loop
 
@@ -869,7 +861,7 @@ DrawForceFieldMaskAsm:
 | int DrawForceFieldMask2Asm(void* screen_mem, short x, short y,
 |                            const UWORD* mask, int planeA, int planeB)
 |
-| Fast-path for fully-visible 48x48 masks ORed into two bitplanes.
+| Fast-path for fully-visible 32x32 masks ORed into two bitplanes.
 | Returns 0 on success, 1 if the C clipping fallback is needed.
 | Stack after movem (48 bytes): +52=screen, +58=x, +62=y, +64=mask,
 |                               +70=planeA, +74=planeB
@@ -888,11 +880,11 @@ DrawForceFieldMask2Asm:
         | Fully-visible fast path only.
         tst.w   d7
         bmi     .ffm2_fail
-        cmpi.w  #272,d7
+        cmpi.w  #288,d7
         bgt     .ffm2_fail
         tst.w   d6
         bmi     .ffm2_fail
-        cmpi.w  #208,d6
+        cmpi.w  #224,d6
         bgt     .ffm2_fail
 
         | a0 = screen_mem + planeA * 10240
@@ -922,7 +914,7 @@ DrawForceFieldMask2Asm:
         andi.w  #15,d4                 | shift
         moveq   #16,d5
         sub.w   d4,d5                  | invShift = 16 - shift
-        move.w  #47,d3                 | 48 rows
+        move.w  #31,d3                 | 32 rows
 
         tst.w   d4
         beq.s   .ffm2_zero_loop
@@ -930,7 +922,6 @@ DrawForceFieldMask2Asm:
 .ffm2_shift_loop:
         move.w  (a3)+,d0               | m0
         move.w  (a3)+,d1               | m1
-        move.w  (a3)+,d6               | m2
 
         move.w  d0,d7                  | mv0 = m0 >> shift
         lsr.w   d4,d7
@@ -944,16 +935,10 @@ DrawForceFieldMask2Asm:
         or.w    d0,2(a0,d2.w)
         or.w    d0,2(a1,d2.w)
 
-        lsl.w   d5,d1                  | mv2 = (m1 << invShift) | (m2 >> shift)
-        move.w  d6,d7
-        lsr.w   d4,d7
-        or.w    d7,d1
-        or.w    d1,4(a0,d2.w)
-        or.w    d1,4(a1,d2.w)
-
-        lsl.w   d5,d6                  | spill = m2 << invShift
-        or.w    d6,6(a0,d2.w)
-        or.w    d6,6(a1,d2.w)
+        move.w  d1,d6                  | mv2 = m1 << invShift
+        lsl.w   d5,d6
+        or.w    d6,4(a0,d2.w)
+        or.w    d6,4(a1,d2.w)
 
         addi.w  #40,d2
         dbra    d3,.ffm2_shift_loop
@@ -962,13 +947,10 @@ DrawForceFieldMask2Asm:
 .ffm2_zero_loop:
         move.w  (a3)+,d0
         move.w  (a3)+,d1
-        move.w  (a3)+,d6
         or.w    d0,(a0,d2.w)
         or.w    d0,(a1,d2.w)
         or.w    d1,2(a0,d2.w)
         or.w    d1,2(a1,d2.w)
-        or.w    d6,4(a0,d2.w)
-        or.w    d6,4(a1,d2.w)
         addi.w  #40,d2
         dbra    d3,.ffm2_zero_loop
 

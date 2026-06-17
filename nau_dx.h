@@ -76,8 +76,8 @@
 
 // Absorption radius: shots of the same polarity within this distance from
 // the ship center are absorbed (Ikaruga-style). Must be >= the dome radius
-// (FORCEFIELD_R = 22) so the dome "catches" shots touching its edge.
-#define ABSORB_RADIUS       24
+// (FORCEFIELD_R = 14) so the dome "catches" shots touching its edge.
+#define ABSORB_RADIUS       16
 
 // Chain/accumulator for absorbed shots. Each absorption adds 1; the
 // accumulator caps at CHAIN_MAX. The special attack (power shot or bomb)
