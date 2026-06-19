@@ -20,8 +20,8 @@
 
         .global ClearGameAreaAsm
 ClearGameAreaAsm:
-| Clear PF2 planes 1,3,5 center (bytes 8-31 = 24 bytes) — CPU movem.l.
-| Blitter DMA contention amb 6 bitplanes el fa 300× més lent que CPU aquí.
+| Clear full PF2 planes 1,3,5 (bytes 0-39 = 40 bytes = full width).
+| No border — cloud bg fills whole screen.
 | Stack: +4=return, +8=screen_mem
         movem.l d0-d7,-(sp)             | 8 regs = 32 bytes
         move.l  36(sp),a0               | a0 = screen_mem
@@ -32,31 +32,39 @@ ClearGameAreaAsm:
         move.l  d0,d3
         move.l  d0,d4
         move.l  d0,d5
+        move.l  d0,d6
+        move.l  d0,d7
 
-        | --- Plane 1 (BPL2) = screen + 10248 ---
-        lea     10248(a0),a1
-        move.w  #255,d6
+        | --- Plane 1 (BPL2) = screen + 10240 ---
+        lea     10240(a0),a1
+        move.w  #255,d5
 .cga_p1:
-        movem.l d0-d5,(a1)
+        movem.l d0-d7,(a1)              | 32 bytes (d0-d7)
+        clr.l   32(a1)                  | bytes 32-35
+        clr.l   36(a1)                  | bytes 36-39
         lea     40(a1),a1
-        dbra    d6,.cga_p1
+        dbra    d5,.cga_p1
 
-        | --- Plane 3 (BPL4) = screen + 30728 ---
-        lea     30728(a0),a1
-        move.w  #255,d6
-.cga_p3:
-        movem.l d0-d5,(a1)
-        lea     40(a1),a1
-        dbra    d6,.cga_p3
-
-        | --- Plane 5 (BPL6) = screen + 51208 ---
+        | --- Plane 3 (BPL4) = screen + 30720 ---
         lea     30720(a0),a1
-        lea     20488(a1),a1
-        move.w  #255,d6
-.cga_p5:
-        movem.l d0-d5,(a1)
+        move.w  #255,d5
+.cga_p3:
+        movem.l d0-d7,(a1)
+        clr.l   32(a1)
+        clr.l   36(a1)
         lea     40(a1),a1
-        dbra    d6,.cga_p5
+        dbra    d5,.cga_p3
+
+        | --- Plane 5 (BPL6) = screen + 51200 ---
+        lea     30720(a0),a1
+        lea     20480(a1),a1
+        move.w  #255,d5
+.cga_p5:
+        movem.l d0-d7,(a1)
+        clr.l   32(a1)
+        clr.l   36(a1)
+        lea     40(a1),a1
+        dbra    d5,.cga_p5
 
         movem.l (sp)+,d0-d7
         rts
@@ -403,6 +411,7 @@ DrawBorderAsm:
 .db_done:
         movem.l (sp)+,d0-d7/a2-a6
         rts
+
 
 | ============================================================
 | int DrawBob16Asm(UBYTE* screen_mem, const UWORD* mask, const UWORD* data,

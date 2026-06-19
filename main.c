@@ -17,7 +17,6 @@
 #include "gfx_enemy_basic24.h"
 #include "gfx_enemy_fast16.h"
 #include "gfx_bg_tiles.h"
-#include "gfx_border.h"
 
 // ============================================================================
 // SYSTEM
@@ -227,54 +226,6 @@ static void ParallaxUpdate(void) {
 
 static void ClearGameArea(UBYTE* screen_mem) {
     ClearGameAreaAsm(screen_mem);
-}
-
-// Draw foreground border (64px, 3-bitplane) on PF2 — ASM optimized with movem
-static void DrawBorder(UBYTE* screen_mem, short scroll_y) {
-    DrawBorderAsm(screen_mem, border_data, border_mirror_data, (int)scroll_y);
-}
-
-// Check ship collision with border (any non-zero pixel = solid)
-static short CheckBorderCollision(short ship_x, short ship_y, short scroll_y) {
-    int border_h = BORDER_H;
-    scroll_y = scroll_y % border_h;
-    if (scroll_y < 0) scroll_y += border_h;
-
-    int sx0 = ship_x + SHIP_HIT_OX;
-    int sy0 = ship_y + SHIP_HIT_OY;
-    int sx1 = sx0 + SHIP_HIT_W;
-    int sy1 = sy0 + SHIP_HIT_H;
-
-    for (int sy = sy0; sy < sy1; sy++) {
-        if (sy < 0 || sy >= SCREEN_H) continue;
-        int src_row = (scroll_y + sy) % border_h;
-        int row_base = src_row * BORDER_ROW_BYTES;
-
-        for (int sx = sx0; sx < sx1; sx++) {
-            if (sx < 0 || sx >= SCREEN_W) continue;
-            int byte_off = 0, bit = 0;
-            const UBYTE* data;
-
-            if (sx < BORDER_W) {
-                byte_off = sx / 8;
-                bit = 7 - (sx & 7);
-                data = border_data;
-            } else if (sx >= SCREEN_W - BORDER_W) {
-                int rx = sx - (SCREEN_W - BORDER_W);
-                byte_off = rx / 8;
-                bit = 7 - (rx & 7);
-                data = border_mirror_data;
-            } else {
-                continue;
-            }
-
-            for (int p = 0; p < 3; p++) {
-                if (data[p * BORDER_PLANE_SIZE + row_base + byte_off] & (1 << bit))
-                    return 1;
-            }
-        }
-    }
-    return 0;
 }
 
 // Pre-render tilemap background into bg_buf (called once at startup)
@@ -613,6 +564,8 @@ __attribute__((externally_visible)) volatile short g_FrameCounter = 0;
 // planes can be used to combine BPL4 + BPL6 (e.g. for the polarity-sweep).
 static void DrawForceFieldMask(UBYTE* screen_mem, short x, short y,
                               const UWORD* mask, int planeIdx) {
+    // DEBUG: probe null
+    if (!screen_mem || !mask) { volatile UWORD* c = (UWORD*)0xdff180; *c = 0x00F; while(1); }
     if (!DrawForceFieldMaskAsm(screen_mem, x, y, mask, planeIdx)) return;
     if (x <= -FORCEFIELD_W || x >= SCREEN_W || y <= -FORCEFIELD_H || y >= SCREEN_H) return;
     UWORD shift = (UWORD)(x & 15);
@@ -640,6 +593,8 @@ static void DrawForceFieldMask(UBYTE* screen_mem, short x, short y,
 
 static void DrawForceFieldMask2(UBYTE* screen_mem, short x, short y,
                                 const UWORD* mask, int planeA, int planeB) {
+    // DEBUG: probe null
+    if (!screen_mem || !mask) { volatile UWORD* c = (UWORD*)0xdff180; *c = 0xF0F; while(1); }
     if (!DrawForceFieldMask2Asm(screen_mem, x, y, mask, planeA, planeB)) return;
     DrawForceFieldMask(screen_mem, x, y, mask, planeA);
     DrawForceFieldMask(screen_mem, x, y, mask, planeB);
@@ -780,7 +735,7 @@ static UWORD g_Palette[32] = {
 static short g_GameState  = GS_PLAYING;
 static short g_StarsEnabled = 0;  // 0=planet mode (no stars), 1=space mode
 static short g_BGScrollY  = 0;    // tilemap vertical scroll offset
-static short g_BorderScrollY = 0; // foreground border scroll
+
 
 // Ship
 static short g_ShipX, g_ShipY;
@@ -868,10 +823,10 @@ static const TLevelConfig g_Levels[ENDGAME_FINAL_LEVEL] = {
 // STARFIELD
 // ============================================================================
 
-// Stars avoid wall zone: 16px padding on each side of game area
-#define STAR_X0 (GAME_X0 + WALL_L_W)       // 32
-#define STAR_W  (GAME_W - WALL_L_W * 2)    // 224
-#define STAR_X1 (STAR_X0 + STAR_W)          // 256
+// Stars cover playfield with 8px edge padding
+#define STAR_X0 8
+#define STAR_W  (GAME_W - 16)
+#define STAR_X1 (STAR_X0 + STAR_W)
 
 static void InitStarfield() {
     g_Stars1 = (TStar*)AllocMem(sizeof(TStar) * N_STARS_1, MEMF_FAST);
@@ -926,7 +881,6 @@ static void ResetGameSession() {
     g_Level      = 1;
     g_NextLifeAt = EXTRA_LIFE_EVERY;
     g_BGScrollY     = BG_MAP_ROWS * BG_TILE_H - SCREEN_H;
-    g_BorderScrollY = BORDER_H - SCREEN_H;
     for (int i = 0; i < MAX_ENEMIES;    i++) g_Enemies[i].active    = 0;
     for (int i = 0; i < MAX_ENEMY_SHOTS;i++) g_EnemyShots[i].active = 0;
     for (int i = 0; i < MAX_EXPLOSIONS; i++) g_Explosions[i].active = 0;
@@ -1222,17 +1176,6 @@ static void UpdateSpriteData(UWORD* sprData) {
     }
 }
 
-static void ClearHudArea(UBYTE* screen_mem) {
-    UBYTE* pf2_bases[3] = {
-        screen_mem + 1 * PLANE_BYTES,
-        screen_mem + 3 * PLANE_BYTES,
-        screen_mem + 5 * PLANE_BYTES
-    };
-    for (int pl = 0; pl < 3; pl++) {
-        memset(pf2_bases[pl], 0, HUD_H * ROW_BYTES);
-    }
-}
-
 // 3×5 bitmap font (bits 7,6,5 = left,middle,right pixel)
 static const UBYTE font_3x5[10][5] = {
     {0xE0,0xA0,0xA0,0xA0,0xE0}, // 0
@@ -1330,7 +1273,6 @@ static void RenderFrame(UBYTE* screen_mem) {
     UpdateSpriteData(g_SprDataBuild);
     g_SprDataPending = g_SprDataBuild;
     ClearGameArea(screen_mem);
-    DrawBorder(screen_mem, g_BorderScrollY);
     if (g_StarsEnabled) {
         for (int i = 0; i < N_STARS_1; i++) DrawPixel(screen_mem, g_Stars1[i].x, g_Stars1[i].y, 1);
         for (int i = 0; i < N_STARS_2; i++) DrawPixel(screen_mem, g_Stars2[i].x, g_Stars2[i].y, 2);
@@ -1415,7 +1357,6 @@ static void RenderFrame(UBYTE* screen_mem) {
         }
 
     }
-    ClearHudArea(screen_mem);
 }
 
 int main() {
@@ -1575,8 +1516,6 @@ int main() {
         // --- Advance background scroll (wraps for infinite loop) ---
         g_BGScrollY -= 2;
         if (g_BGScrollY < 0) g_BGScrollY = BG_MAP_ROWS * BG_TILE_H - 1;
-        g_BorderScrollY -= 3;
-        if (g_BorderScrollY < 0) g_BorderScrollY += BORDER_H;
         for (int i = 0; i < N_STARS_1; i++) {
             if (++g_Stars1[i].y >= GAME_H) {
                 g_Stars1[i].y = 0;
@@ -1658,13 +1597,6 @@ int main() {
                     g_FireWasPressed = fireNow;
                     if (g_FireCooldown > 0) g_FireCooldown--;
                     if (g_ForceFieldTransition > 0) g_ForceFieldTransition--;
-                }
-
-                if (CheckBorderCollision(g_ShipX, g_ShipY, g_BorderScrollY)) {
-                    SpawnExplosion(g_ShipX, g_ShipY, EXP_KIND_SHIP);
-                    g_ShipExploding  = 1;
-                    g_ShipExplTimer  = SHIP_EXPL_TIMER;
-                    g_Lives--;
                 }
 
             } else {
