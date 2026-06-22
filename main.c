@@ -1059,6 +1059,12 @@ static void BuildCopperListEx(USHORT* cop, const UBYTE** hud_planes,
     cop = copSetReg(cop, 0x108, 0);                                // BPL1MOD
     cop = copSetReg(cop, 0x10A, 0);                                // BPL2MOD
 
+    // Set colors for the HUD (lines 0 to 76)
+    cop = copSetColor(cop, 0, 0x000);                             // Background = black
+    cop = copSetColor(cop, 1, 0x0CF);                             // Squares = blue
+    cop = copSetColor(cop, 6, 0x777);                             // Separator = gray
+    cop = copSetColor(cop, 7, 0xFFF);                             // Text = white
+
     // --- PF1: HUD (top 32 lines), PF2: game buffer ---
     // Absolute copper register addresses (0x0E0 = BPL1PTH, 0x0E8 = BPL3PTH, 0x0F0 = BPL5PTH)
     //                           (0x0E4 = BPL2PTH, 0x0EC = BPL4PTH, 0x0F4 = BPL6PTH)
@@ -1290,7 +1296,7 @@ static void DrawHud(UBYTE* buf, ULONG hp) {
         for (int py = 0; py < 4; py++)
             for (int px = 0; px < 4; px++)
                 if (i < g_AbsorbCount)
-                    HudSetPixel(buf, hp, (short)(dx + px), (short)(14 + py), g_ShipPolarity ? 7 : 1);
+                    HudSetPixel(buf, hp, (short)(dx + px), (short)(14 + py), 1);
     }
 }
 
@@ -1434,13 +1440,15 @@ int main() {
     UBYTE* draw_buf = screen_mem;
     UBYTE* show_buf = screen_mem + buf_size;
 
-    // --- Allocate HUD buffer (PF1 only, 3 planes × HUD_H rows) ---
+    // --- Allocate HUD buffer (PF1 only, 3 planes × HUD_H rows × 2 for double-buffering) ---
     const ULONG hud_plane_bytes = ROW_BYTES * HUD_H;
-    UBYTE* hud_buf = (UBYTE*)AllocMem(hud_plane_bytes * BG_BPL, MEMF_CHIP | MEMF_CLEAR);
+    UBYTE* hud_buf = (UBYTE*)AllocMem(hud_plane_bytes * BG_BPL * 2, MEMF_CHIP | MEMF_CLEAR);
     if (!hud_buf) { FreeMem(screen_mem, buf_size * 2); CloseLibrary((struct Library*)DOSBase); CloseLibrary((struct Library*)GfxBase); Exit(0); }
+    UBYTE* hud_draw = hud_buf;
+    UBYTE* hud_show = hud_buf + hud_plane_bytes * BG_BPL;
 
     UBYTE* bg_buf = (UBYTE*)AllocMem(BG_PLANE_BYTES * BG_BPL, MEMF_CHIP | MEMF_CLEAR);
-    if (!bg_buf) { FreeMem(screen_mem, buf_size * 2); FreeMem(hud_buf, hud_plane_bytes * BG_BPL); CloseLibrary((struct Library*)DOSBase); CloseLibrary((struct Library*)GfxBase); Exit(0); }
+    if (!bg_buf) { FreeMem(screen_mem, buf_size * 2); FreeMem(hud_buf, hud_plane_bytes * BG_BPL * 2); CloseLibrary((struct Library*)DOSBase); CloseLibrary((struct Library*)GfxBase); Exit(0); }
     InitTilemapBG(bg_buf);
     // Copy first 256 rows to end for seamless wrap scrolling
     for (int bpl = 0; bpl < BG_BPL; bpl++) {
@@ -1490,7 +1498,7 @@ int main() {
 
     // Build initial copper list: HUD + PF2 from show_buf, PF1 from bg_buf (scroll=0)
     {
-        const UBYTE* hud[3] = { hud_buf + 0*hud_plane_bytes, hud_buf + 1*hud_plane_bytes, hud_buf + 2*hud_plane_bytes };
+        const UBYTE* hud[3] = { hud_show + 0*hud_plane_bytes, hud_show + 1*hud_plane_bytes, hud_show + 2*hud_plane_bytes };
         const UBYTE* pf1[3] = { bg_buf + 0*BG_PLANE_BYTES, bg_buf + 1*BG_PLANE_BYTES, bg_buf + 2*BG_PLANE_BYTES };
         const UBYTE* pf2[3] = { show_buf + 1*plane_size, show_buf + 3*plane_size, show_buf + 5*plane_size };
         BuildCopperListEx(cop_show, hud, pf1, pf2, 0);
@@ -1535,14 +1543,14 @@ int main() {
         RenderFrame(draw_buf);
 
         // Redraw HUD each frame
-        DrawHud(hud_buf, hud_plane_bytes);
+        DrawHud(hud_draw, hud_plane_bytes);
 
         // Build copper: PF1 from bg_buf (with scroll), PF2 from draw_buf
         {
             const UBYTE* pf1[3] = { bg_buf + 0*BG_PLANE_BYTES, bg_buf + 1*BG_PLANE_BYTES, bg_buf + 2*BG_PLANE_BYTES };
-        const UBYTE* hud[3] = { hud_buf + 0*hud_plane_bytes, hud_buf + 1*hud_plane_bytes, hud_buf + 2*hud_plane_bytes };
-        const UBYTE* pf2[3] = { draw_buf + 1*plane_size, draw_buf + 3*plane_size, draw_buf + 5*plane_size };
-        BuildCopperListEx(cop_build, hud, pf1, pf2, g_BGScrollY);
+            const UBYTE* hud[3] = { hud_show + 0*hud_plane_bytes, hud_show + 1*hud_plane_bytes, hud_show + 2*hud_plane_bytes };
+            const UBYTE* pf2[3] = { draw_buf + 1*plane_size, draw_buf + 3*plane_size, draw_buf + 5*plane_size };
+            BuildCopperListEx(cop_build, hud, pf1, pf2, g_BGScrollY);
         }
         // Schedule copper swap at next VBlank
         { USHORT* tmp = cop_build; cop_build = cop_show; cop_show = tmp; }
@@ -1562,6 +1570,7 @@ int main() {
         // Swap buffers for next frame: the freshly rendered draw_buf becomes
         // show_buf, the old show_buf becomes the next render target
         { UBYTE* tmp = draw_buf; draw_buf = show_buf; show_buf = tmp; }
+        { UBYTE* tmp = hud_draw; hud_draw = hud_show; hud_show = tmp; }
 
         // --- Game logic ---
         UBYTE joy = ReadJoy();
