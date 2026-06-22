@@ -701,7 +701,7 @@ static UWORD g_Palette[32] = {
     //   reg 13 (BPL2+BPL6): 0x0212         — border dark
     //   reg 14 (BPL4+BPL6): 0x0756         — border mid
     //   reg 15 (all):       0x0434         — border light
-    0x0000,              //  8  PF2 transparent
+    0x0000,              //  8  PF2 transparent (unused with PF2OF=1, but keep 0)
     0x0FFF,              //  9  PF2 white
     0x000,               // 10  PF2 black
     0xF00,               // 11  PF2 red
@@ -738,15 +738,15 @@ static short g_BGScrollY  = 0;    // tilemap vertical scroll offset
 
 
 // Ship
-static short g_ShipX, g_ShipY;
-static short g_ShipExploding  = 0;
-static short g_ShipExplTimer  = 0;
+__attribute__((externally_visible)) short g_ShipX, g_ShipY;
+__attribute__((externally_visible)) short g_ShipExploding  = 0;
+__attribute__((externally_visible)) short g_ShipExplTimer  = 0;
 
 // Shots
 __attribute__((externally_visible)) TShot      g_Shots[MAX_SHOTS];
 static short      g_FireCooldown     = 0;
 // Polarity: 0 = white (default), 1 = black (when fire is held)
-static short      g_ShipPolarity     = 0;
+__attribute__((externally_visible)) short      g_ShipPolarity     = 0;
 static short      g_FireHoldFrames   = 0;
 static short      g_FireWasPressed   = 0;
 
@@ -764,13 +764,13 @@ __attribute__((externally_visible)) TExplosion g_Explosions[MAX_EXPLOSIONS];
 
 // Absorption chain: counts absorbed shots of the same polarity. Capped at
 // CHAIN_MAX. Displayed in the HUD as a row of small dots.
-static short g_AbsorbCount = 0;
+__attribute__((externally_visible)) short g_AbsorbCount = 0;
 
 // Score / progress
-static unsigned short g_Score      = 0;
-static short          g_Lives      = 3;
+__attribute__((externally_visible)) unsigned short g_Score      = 0;
+__attribute__((externally_visible)) short          g_Lives      = 3;
 static short          g_Level      = 1;
-static unsigned short g_NextLifeAt = EXTRA_LIFE_EVERY;
+__attribute__((externally_visible)) unsigned short g_NextLifeAt = EXTRA_LIFE_EVERY;
 
 // Wave state
 static short g_WaveActive   = 0;
@@ -934,14 +934,14 @@ static void SpawnEnemy(short type) {
     }
 }
 
-static void SpawnExplosion(short x, short y, short kind) {
+__attribute__((externally_visible)) void SpawnExplosion(int x, int y, int kind) {
     for (int i = 0; i < MAX_EXPLOSIONS; i++) {
         if (!g_Explosions[i].active) {
             g_Explosions[i].active = 1;
-            g_Explosions[i].x = x;
-            g_Explosions[i].y = y;
+            g_Explosions[i].x = (short)x;
+            g_Explosions[i].y = (short)y;
             g_Explosions[i].frame = 0;
-            g_Explosions[i].kind = kind;
+            g_Explosions[i].kind = (short)kind;
             break;
         }
     }
@@ -952,7 +952,7 @@ static void SpawnExplosion(short x, short y, short kind) {
 // (capped at CHAIN_MAX). The shot is consumed (no bounce-back) and the
 // energy will be released later as a special attack (TBD: power shot or
 // bomb). A brief flash marks the absorption point.
-static void AbsorbEnemyShot(short enemyShotIdx) {
+__attribute__((externally_visible)) void AbsorbEnemyShot(int enemyShotIdx) {
     short ex = g_EnemyShots[enemyShotIdx].x;
     short ey = g_EnemyShots[enemyShotIdx].y;
     g_EnemyShots[enemyShotIdx].active = 0;
@@ -1051,7 +1051,7 @@ static void BuildCopperListEx(USHORT* cop, const UBYTE** hud_planes,
 
     cop = copSetReg(cop, 0x100, (6<<12) | (1<<10));               // BPLCON0
     cop = copSetReg(cop, 0x102, 0);                                // BPLCON1
-    cop = copSetReg(cop, 0x104, (1<<6) | (2<<2) | (1<<1));        // BPLCON2
+    cop = copSetReg(cop, 0x104, (1<<6) | (2<<2) | (0<<0));        // BPLCON2 (PF2PRI=1, PF2OF=1, PF1OF=0)
     cop = copSetReg(cop, 0x108, 0);                                // BPL1MOD
     cop = copSetReg(cop, 0x10A, 0);                                // BPL2MOD
 
@@ -1650,94 +1650,15 @@ int main() {
             // --- Update enemies (68k ASM: just movement + off-screen) ---
             AsmUpdateEnemies();
 
-            // Simple shot-enemy collision
-            for (int i = 0; i < MAX_ENEMIES; i++) {
-                TEnemy* e = &g_Enemies[i];
-                if (!e->active) continue;
-
-                // Simple shot-enemy collision
-                for (int s = 0; s < MAX_SHOTS; s++) {
-                    if (!g_Shots[s].active) continue;
-                    if (g_Shots[s].x + SHOT_W  > e->x &&
-                        g_Shots[s].x            < e->x + ENEMY_W &&
-                        g_Shots[s].y + SHOT_H  > e->y &&
-                        g_Shots[s].y            < e->y + ENEMY_H) {
-                        g_Shots[s].active = 0;
-                        e->health--;
-                        if (e->health <= 0) {
-                            e->active = 0;
-                            g_WaveKilled++;
-                            switch (e->type) {
-                                case ENEMY_TYPE_BASIC:  g_Score += ENEMY_SCORE_BASIC;  break;
-                                case ENEMY_TYPE_FAST:   g_Score += ENEMY_SCORE_FAST;   break;
-                            }
-                            SpawnExplosion(e->x, e->y, EXP_KIND_ENEMY);
-                            // Check extra life
-                            if (g_Score >= g_NextLifeAt) {
-                                g_Lives++;
-                                g_NextLifeAt += EXTRA_LIFE_EVERY;
-                            }
-                        }
-                    }
-                }
-
-                // Enemy-ship collision
-                if (!g_ShipExploding) {
-                    if (e->x + ENEMY_W  > g_ShipX + SHIP_HIT_OX &&
-                        e->x            < g_ShipX + SHIP_HIT_OX + SHIP_HIT_W &&
-                        e->y + ENEMY_H  > g_ShipY + SHIP_HIT_OY &&
-                        e->y            < g_ShipY + SHIP_HIT_OY + SHIP_HIT_H) {
-                        e->active = 0;
-                        g_WaveKilled++;
-                        SpawnExplosion(e->x, e->y, EXP_KIND_ENEMY);
-                        SpawnExplosion(g_ShipX, g_ShipY, EXP_KIND_SHIP);
-                        g_ShipExploding  = 1;
-                        g_ShipExplTimer  = SHIP_EXPL_TIMER;
-                        g_Lives--;
-                    }
-                }
-            }
+            // Collision checks (68k ASM)
+            AsmCollideShotsEnemies();
+            AsmCollideEnemiesShip();
 
             // --- Update enemy shots (68k ASM: just movement + off-screen) ---
             AsmUpdateEnemyShots();
 
-            // Enemy shot vs ship / dome interaction:
-            //  1. Same polarity AND within ABSORB_RADIUS of ship center → ABSORB
-            //  2. Opposite polarity AND overlapping ship hitbox        → DAMAGE
-            for (int i = 0; i < MAX_ENEMY_SHOTS; i++) {
-                if (!g_EnemyShots[i].active) continue;
-                if (g_ShipExploding) continue;
-
-                short sx = g_EnemyShots[i].x;
-                short sy = g_EnemyShots[i].y;
-
-                // Absorption check (same polarity only)
-                if (g_EnemyShots[i].variant == g_ShipPolarity) {
-                    short shipCX = (short)(g_ShipX + SHIP_W/2);
-                    short shipCY = (short)(g_ShipY + SHIP_H/2);
-                    short dx = (short)((sx + ENEMYSHOT_W/2) - shipCX);
-                    short dy = (short)((sy + ENEMYSHOT_H/2) - shipCY);
-                    long dist2 = (long)dx*dx + (long)dy*dy;
-                    if (dist2 <= (long)ABSORB_RADIUS * (long)ABSORB_RADIUS) {
-                        AbsorbEnemyShot(i);
-                        continue;
-                    }
-                }
-
-                // Damage check (opposite polarity only, AABB on ship hitbox)
-                if (g_EnemyShots[i].variant != g_ShipPolarity) {
-                    if (sx + ENEMYSHOT_W > g_ShipX + SHIP_HIT_OX &&
-                        sx               < g_ShipX + SHIP_HIT_OX + SHIP_HIT_W &&
-                        sy + ENEMYSHOT_H > g_ShipY + SHIP_HIT_OY &&
-                        sy               < g_ShipY + SHIP_HIT_OY + SHIP_HIT_H) {
-                        g_EnemyShots[i].active = 0;
-                        SpawnExplosion(g_ShipX, g_ShipY, EXP_KIND_SHIP);
-                        g_ShipExploding  = 1;
-                        g_ShipExplTimer  = SHIP_EXPL_TIMER;
-                        g_Lives--;
-                    }
-                }
-            }
+            // Enemy shot vs ship / dome interaction (68k ASM)
+            AsmCollideEnemyShotsShip();
 
             // --- Enemy firing (68k ASM) ---
             AsmEnemyFire();

@@ -349,7 +349,7 @@ check, `adda.w #N,a0` for the next-element stride.
 - [ ] **Boss fight** every 5 levels.
 
 ### Phase 3: Optimization
-- [ ] Move more update loops to ASM (player shot vs enemy collision,
+- [x] Move more update loops to ASM (player shot vs enemy collision,
   enemy vs ship collision, enemy shot vs ship collision) once
   `MAX_SHOTS` is increased to 16-24 and the absorption is in place.
   These collisions are the hot path during dense fire.
