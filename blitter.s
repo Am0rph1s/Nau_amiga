@@ -20,57 +20,46 @@
 
         .global ClearGameAreaAsm
 ClearGameAreaAsm:
-| Clear full PF2 planes 1,3,5 (bytes 0-39 = 40 bytes = full width).
-| No border — cloud bg fills whole screen.
-| Stack: +4=return, +8=screen_mem
-        movem.l d0-d7,-(sp)             | 8 regs = 32 bytes
-        move.l  36(sp),a0               | a0 = screen_mem
+        move.l  4(sp),a0                | a0 = screen_mem
+        lea     CUSTOM,a1
 
-        moveq   #0,d0
-        move.l  d0,d1
-        move.l  d0,d2
-        move.l  d0,d3
-        move.l  d0,d4
-        move.l  d0,d5
-        move.l  d0,d6
-        move.l  d0,d7
+        | Wait for blitter to be idle
+1:      btst    #6,DMACONR(a1)
+        bne     1b
 
-        | --- Plane 1 (BPL2) = screen + 10240 ---
-        lea     10240(a0),a1
-        move.w  #255,d7
-.cga_p1:
-        movem.l d0-d6,(a1)              | 28 bytes (d0-d6)
-        clr.l   28(a1)                  | bytes 28-31
-        clr.l   32(a1)                  | bytes 32-35
-        clr.l   36(a1)                  | bytes 36-39
-        lea     40(a1),a1
-        dbra    d7,.cga_p1
+        move.w  #0x0100,BLTCON0(a1)     | minterm=0, D-only active
+        move.w  #0x0000,BLTCON1(a1)
+        move.w  #0x0000,BLTDMOD(a1)
 
-        | --- Plane 3 (BPL4) = screen + 30720 ---
-        lea     30720(a0),a1
-        move.w  #255,d7
-.cga_p3:
-        movem.l d0-d6,(a1)
-        clr.l   28(a1)
-        clr.l   32(a1)
-        clr.l   36(a1)
-        lea     40(a1),a1
-        dbra    d7,.cga_p3
+        | --- Plane 1 (BPL2) = screen_mem + 10240 ---
+        move.l  a0,d0
+        addi.l  #10240,d0
+2:      btst    #6,DMACONR(a1)
+        bne     2b
+        move.l  d0,BLTDPTH(a1)
+        move.w  #0x4014,BLTSIZE(a1)     | height=256, width=20 words
 
-        | --- Plane 5 (BPL6) = screen + 51200 ---
-        lea     30720(a0),a1
-        lea     20480(a1),a1
-        move.w  #255,d7
-.cga_p5:
-        movem.l d0-d6,(a1)
-        clr.l   28(a1)
-        clr.l   32(a1)
-        clr.l   36(a1)
-        lea     40(a1),a1
-        dbra    d7,.cga_p5
+        | --- Plane 3 (BPL4) = screen_mem + 30720 ---
+        move.l  a0,d0
+        addi.l  #30720,d0
+3:      btst    #6,DMACONR(a1)
+        bne     3b
+        move.l  d0,BLTDPTH(a1)
+        move.w  #0x4014,BLTSIZE(a1)
 
-        movem.l (sp)+,d0-d7
+        | --- Plane 5 (BPL6) = screen_mem + 51200 ---
+        move.l  a0,d0
+        addi.l  #51200,d0
+4:      btst    #6,DMACONR(a1)
+        bne     4b
+        move.l  d0,BLTDPTH(a1)
+        move.w  #0x4014,BLTSIZE(a1)
+
+5:      btst    #6,DMACONR(a1)
+        bne     5b
+
         rts
+
 
 
 
@@ -534,10 +523,17 @@ DrawBob16Asm:
 |                    const UWORD* dataHi, const UWORD* dataLo,
 |                    short x, short y, UBYTE planeHi, UBYTE planeLo)
 |
-| Fast-path for word-aligned, fully visible 32x24 bobs with 2 data planes + clear plane5.
+| Fast-path for fully visible 32x24 bobs with 2 data planes + clear plane5.
 | Returns 0 on success, 1 if needs C fallback.
 | Stack: sp+52=screen, +56=mask, +60=dataHi, +64=dataLo, +68=x, +72=y, +76=planeHi, +80=planeLo
 | ============================================================
+        .equ    BLTAPTH,  0x050
+        .equ    BLTBPTH,  0x04C
+        .equ    BLTCPTH,  0x048
+        .equ    BLTAMOD,  0x064
+        .equ    BLTBMOD,  0x062
+        .equ    BLTCMOD,  0x060
+
         .global DrawBob32d2Asm
 DrawBob32d2Asm:
         movem.l d2-d7/a2-a6,-(sp)      | 11 regs = 44 bytes
@@ -546,107 +542,144 @@ DrawBob32d2Asm:
         move.l  52(sp),a3               | a3 = mask
         move.l  56(sp),a4               | a4 = dataHi
         move.l  60(sp),a5               | a5 = dataLo
-        move.w  66(sp),d7               | d7 = x (low 16 of int)
+        move.w  66(sp),d7               | d7 = x
         move.w  70(sp),d6               | d6 = y
         move.w  74(sp),d5               | d5 = planeHi
         move.w  78(sp),d4               | d4 = planeLo
 
         | Fast-path checks
-        btst    #0,d7
-        bne     .db322_fail
-        cmpi.w  #-32,d7
-        ble     .db322_fail
+        tst.w   d7
+        blt     .db322_fail
         cmpi.w  #288,d7
         bgt     .db322_fail
         tst.w   d6
-        bmi     .db322_fail
-
-        | Setup plane pointers (plane index * 10240)
-        move.w  d5,d0
-        mulu    #10240,d0
-        move.l  a2,a0
-        adda.l  d0,a0                   | a0 = screen + planeHi*10240
-        move.w  d4,d0
-        mulu    #10240,d0
-        move.l  a2,a1
-        adda.l  d0,a1                   | a1 = screen + planeLo*10240
-        | plane5 (always at 5*10240)
-        lea     30720(a2),a6
-        lea     20480(a6),a6            | a6 = plane5
-
-        | wx = x >> 4, byte offset = wx * 2
-        move.w  d7,d2
-        lsr.w   #4,d2                   | d2 = wx
-        add.w   d2,d2                   | d2 = wx * 2 (byte offset)
-
-        | Row offset = y * 40 + wx * 2
-        move.w  d6,d3
-        lsl.w   #5,d3                   | y * 32
+        blt     .db322_fail
         move.w  d6,d0
-        lsl.w   #3,d0                   | y * 8
-        add.w   d0,d3                   | y * 40
-        add.w   d2,d3                   | + wx*2
-
-        | Check bottom: y + 24 > 256?
-        addi.w  #24,d6
-        cmpi.w  #256,d6
+        addi.w  #24,d0
+        cmpi.w  #256,d0
         bgt     .db322_fail
 
-        | Row increment = 40 bytes
-        moveq   #40,d2
-        | 24 rows (use dbra)
-        moveq   #23,d7
+        | Calculate shift value (x & 15) -> d1
+        move.w  d7,d1
+        andi.w  #15,d1                  | d1 = shift
+        move.w  d1,d0                   | save shift in d0
 
-.db322_rloop:
-        | Load mask words (2 per row for 32px)
-        move.w  (a3)+,d0                | mask word 0
-        move.w  (a3)+,d1                | mask word 1
+        | Calculate row byte offset = y * 40 + (x >> 4) * 2 -> d1
+        move.w  d7,d2
+        lsr.w   #4,d2
+        add.w   d2,d2                   | d2 = wx * 2
 
-        | Apply to planeHi (mask + dataHi)
-        move.w  (a4)+,d5                | dataHi word 0
-        move.w  (a4)+,d6                | dataHi word 1
-        | Word 0: cookie-cut
-        move.w  d0,d4
-        not.w   d4
-        and.w   d4,(a0,d3.w)            | clear mask area
-        and.w   d0,d5                   | data & mask
-        or.w    d5,(a0,d3.w)            | set data bits
-        | Word 1 (offset +2 bytes)
-        move.w  d1,d4
-        not.w   d4
-        and.w   d4,2(a0,d3.w)
-        and.w   d1,d6
-        or.w    d6,2(a0,d3.w)
+        moveq   #0,d1
+        move.w  d6,d1
+        lsl.w   #5,d1                   | y * 32
+        move.w  d6,d7
+        lsl.w   #3,d7                   | y * 8
+        add.w   d7,d1                   | y * 40
+        add.w   d2,d1                   | d1 = row byte offset
 
-        | Apply to planeLo (mask + dataLo)
-        move.w  (a5)+,d5                | dataLo word 0
-        move.w  (a5)+,d6                | dataLo word 1
-        | Word 0
-        move.w  d0,d4
-        not.w   d4
-        and.w   d4,(a1,d3.w)
-        and.w   d0,d5
-        or.w    d5,(a1,d3.w)
-        | Word 1
-        move.w  d1,d4
-        not.w   d4
-        and.w   d4,2(a1,d3.w)
-        and.w   d1,d6
-        or.w    d6,2(a1,d3.w)
+        | Get plane pointers (a0, a1, a6)
+        | planeHi -> a0
+        move.w  d5,d7
+        mulu    #10240,d7
+        add.l   a2,d7
+        add.l   d1,d7
+        move.l  d7,a0
 
-        | Clear plane5 in mask area
-        move.w  d0,d4
-        not.w   d4
-        and.w   d4,(a6,d3.w)
-        move.w  d1,d4
-        not.w   d4
-        and.w   d4,2(a6,d3.w)
+        | planeLo -> a1
+        move.w  d4,d7
+        mulu    #10240,d7
+        add.l   a2,d7
+        add.l   d1,d7
+        move.l  d7,a1
 
-        | Next row
-        add.w   d2,d3                   | row offset += 40
-        dbra    d7,.db322_rloop
+        | pl3rd -> a6
+        moveq   #9,d7
+        sub.w   d5,d7
+        sub.w   d4,d7
+        mulu    #10240,d7
+        add.l   a2,d7
+        add.l   d1,d7
+        move.l  d7,a6
 
-        moveq   #0,d0                   | success
+        | Now reuse a2 for CUSTOM
+        lea     CUSTOM,a2
+
+        | Wait for blitter to be idle
+1:      btst    #6,DMACONR(a2)
+        bne     1b
+
+        | Set up common blitter registers
+        move.w  #0xFFFF,BLTAFWM(a2)
+        move.w  #0x0000,BLTALWM(a2)
+        move.w  #-2,BLTAMOD(a2)
+        move.w  #34,BLTCMOD(a2)
+        move.w  #34,BLTDMOD(a2)
+
+        | --- BLIT 1: Clear pl3rd in mask area (D = C & ~A) ---
+2:      btst    #6,DMACONR(a2)
+        bne     2b
+
+        move.w  d0,d7                   | shift
+        lsl.w   #8,d7
+        lsl.w   #4,d7                   | d7 = shift << 12
+        move.w  d7,d1
+        or.w    #0x0B0A,d7              | channels A, C, D active, minterm = 0x0A
+        move.w  d7,BLTCON0(a2)
+        move.w  d1,BLTCON1(a2)
+
+        move.l  a3,BLTAPTH(a2)          | mask (A)
+        move.l  a6,BLTCPTH(a2)          | pl3rd (C)
+        move.l  a6,BLTDPTH(a2)          | pl3rd (D)
+
+        move.w  #0x0603,BLTSIZE(a2)     | 24 rows, 3 words
+
+        | --- BLIT 2: Draw dataHi to planeHi (D = (A & B) | (C & ~A)) ---
+3:      btst    #6,DMACONR(a2)
+        bne     3b
+
+        move.w  #-2,BLTBMOD(a2)
+
+4:      btst    #6,DMACONR(a2)
+        bne     4b
+
+        move.w  d0,d7                   | shift
+        lsl.w   #8,d7
+        lsl.w   #4,d7
+        move.w  d7,d1
+        or.w    #0x0FCA,d7              | channels A, B, C, D active, minterm = 0xCA
+        move.w  d7,BLTCON0(a2)
+        move.w  d1,BLTCON1(a2)
+
+        move.l  a3,BLTAPTH(a2)          | mask (A)
+        move.l  a4,BLTBPTH(a2)          | dataHi (B)
+        move.l  a0,BLTCPTH(a2)          | planeHi (C)
+        move.l  a0,BLTDPTH(a2)          | planeHi (D)
+
+        move.w  #0x0603,BLTSIZE(a2)
+
+        | --- BLIT 3: Draw dataLo to planeLo (D = (A & B) | (C & ~A)) ---
+5:      btst    #6,DMACONR(a2)
+        bne     5b
+
+        move.w  d0,d7
+        lsl.w   #8,d7
+        lsl.w   #4,d7
+        move.w  d7,d1
+        or.w    #0x0FCA,d7
+        move.w  d7,BLTCON0(a2)
+        move.w  d1,BLTCON1(a2)
+
+        move.l  a3,BLTAPTH(a2)          | mask (A)
+        move.l  a5,BLTBPTH(a2)          | dataLo (B)
+        move.l  a1,BLTCPTH(a2)          | planeLo (C)
+        move.l  a1,BLTDPTH(a2)          | planeLo (D)
+
+        move.w  #0x0603,BLTSIZE(a2)
+
+6:      btst    #6,DMACONR(a2)
+        bne     6b
+
+        moveq   #0,d0
         bra.s   .db322_exit
 
 .db322_fail:
@@ -655,12 +688,13 @@ DrawBob32d2Asm:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
+
 | ============================================================
 | int DrawBob16d2Asm(UBYTE* screen_mem, const UWORD* mask,
 |                    const UWORD* dataHi, const UWORD* dataLo,
 |                    short x, short y, UBYTE planeHi, UBYTE planeLo, UWORD rows)
 |
-| Fast-path for word-aligned 16px bobs with 2 data planes + clear plane5.
+| Fast-path for 16px bobs with 2 data planes + clear plane5.
 | Returns 0 on success, 1 if needs C fallback.
 | Stack: sp+52=screen, +56=mask, +60=dataHi, +64=dataLo, +68=x, +72=y,
 |        +76=planeHi, +80=planeLo, +84=rows
@@ -682,91 +716,145 @@ DrawBob16d2Asm:
         | Fast-path checks
         tst.w   d3
         beq     .db162_fail
-        move.w  d7,d0
-        andi.w  #15,d0
-        bne     .db162_fail
-        cmpi.w  #-16,d7
-        ble     .db162_fail
+        tst.w   d7
+        blt     .db162_fail
         cmpi.w  #304,d7
         bgt     .db162_fail
         tst.w   d6
-        bmi     .db162_fail
-
-        | Plane pointers
-        move.w  d5,d0
-        mulu    #10240,d0
-        move.l  a2,a0
-        adda.l  d0,a0                   | a0 = planeHi
-        move.w  d4,d0
-        mulu    #10240,d0
-        move.l  a2,a1
-        adda.l  d0,a1                   | a1 = planeLo
-        | Calculate pointer to the third PF2 plane (whichever of 1,3,5 is not planeHi/planeLo)
-        | At this point: d5=planeHi, d4=planeLo, d7=x, d6=y
-        | pl3rd = 9 - planeHi - planeLo
-        moveq   #9,d0
-        sub.w   d5,d0
-        sub.w   d4,d0                   | d0 = pl3rd index (uses d5=planeHi, d4=planeLo)
-        mulu    #10240,d0
-        move.l  a2,a6
-        adda.l  d0,a6                   | a6 = ptr to third PF2 plane
-
-        | wx = x >> 4, byte offset = wx * 2
-        move.w  d7,d2
-        lsr.w   #4,d2
-        add.w   d2,d2                   | d2 = wx * 2
-
-        | Row offset = y * 40 + wx * 2
-        move.w  d6,d1
-        lsl.w   #5,d1                   | y * 32
-        move.w  d6,d0
-        lsl.w   #3,d0                   | y * 8
-        add.w   d0,d1                   | y * 40
-        add.w   d2,d1                   | + wx*2 -> d1 = row byte offset
-
-        | Bottom check
+        blt     .db162_fail
         move.w  d6,d0
         add.w   d3,d0                   | y + rows
         cmpi.w  #256,d0
         bgt     .db162_fail
 
-        | Save plane numbers into d7/d6 (x/y no longer needed)
-        move.w  d5,d7                    | d7 = planeHi
-        move.w  d4,d6                    | d6 = planeLo
+        | Calculate shift value (x & 15) -> d1
+        move.w  d7,d1
+        andi.w  #15,d1                  | d1 = shift
+        move.w  d1,d0                   | save shift in d0
 
-        | dbra counter
-        subq.w  #1,d3
-        | Row increment
-        moveq   #40,d2
+        | Calculate row byte offset = y * 40 + (x >> 4) * 2 -> d1
+        move.w  d7,d2
+        lsr.w   #4,d2
+        add.w   d2,d2                   | d2 = wx * 2
 
-.db162_rloop:
-        move.w  (a3)+,d0                | mask
+        moveq   #0,d1
+        move.w  d6,d1
+        lsl.w   #5,d1                   | y * 32
+        move.w  d6,d7
+        lsl.w   #3,d7                   | y * 8
+        add.w   d7,d1                   | y * 40
+        add.w   d2,d1                   | d1 = row byte offset
 
-        | planeHi: cookie-cut
-        move.w  (a4)+,d5
-        move.w  d0,d4
-        not.w   d4
-        and.w   d4,(a0,d1.w)
-        and.w   d0,d5
-        or.w    d5,(a0,d1.w)
+        | Get plane pointers (a0, a1, a6)
+        | planeHi -> a0
+        move.w  d5,d7
+        mulu    #10240,d7
+        add.l   a2,d7
+        add.l   d1,d7
+        move.l  d7,a0
 
-        | planeLo: cookie-cut
-        move.w  (a5)+,d5
-        move.w  d0,d4
-        not.w   d4
-        and.w   d4,(a1,d1.w)
-        and.w   d0,d5
-        or.w    d5,(a1,d1.w)
+        | planeLo -> a1
+        move.w  d4,d7
+        mulu    #10240,d7
+        add.l   a2,d7
+        add.l   d1,d7
+        move.l  d7,a1
 
-        | Always clear the third PF2 plane in the mask area
-        move.w  d0,d4
-        not.w   d4
-        and.w   d4,(a6,d1.w)
-.db162_clr_skip:
+        | pl3rd -> a6
+        moveq   #9,d7
+        sub.w   d5,d7
+        sub.w   d4,d7
+        mulu    #10240,d7
+        add.l   a2,d7
+        add.l   d1,d7
+        move.l  d7,a6
 
-        | Next row
-        add.w   d2,d1
-        dbra    d3,.db162_rloop
+        | Now reuse a2 for CUSTOM
+        lea     CUSTOM,a2
+
+        | Wait for blitter to be idle
+1:      btst    #6,DMACONR(a2)
+        bne     1b
+
+        | Set up common blitter registers
+        move.w  #0xFFFF,BLTAFWM(a2)
+        move.w  #0x0000,BLTALWM(a2)
+        move.w  #-2,BLTAMOD(a2)
+        move.w  #36,BLTCMOD(a2)
+        move.w  #36,BLTDMOD(a2)
+
+        | --- BLIT 1: Clear pl3rd in mask area (D = C & ~A) ---
+2:      btst    #6,DMACONR(a2)
+        bne     2b
+
+        move.w  d0,d7                   | shift
+        lsl.w   #8,d7
+        lsl.w   #4,d7                   | d7 = shift << 12
+        move.w  d7,d1
+        or.w    #0x0B0A,d7              | channels A, C, D active, minterm = 0x0A
+        move.w  d7,BLTCON0(a2)
+        move.w  d1,BLTCON1(a2)
+
+        move.l  a3,BLTAPTH(a2)          | mask (A)
+        move.l  a6,BLTCPTH(a2)          | pl3rd (C)
+        move.l  a6,BLTDPTH(a2)          | pl3rd (D)
+
+        move.w  d3,d7                   | rows
+        lsl.w   #6,d7
+        addq.w  #2,d7                   | (rows << 6) | 2
+        move.w  d7,BLTSIZE(a2)          | start clear blit!
+
+        | --- BLIT 2: Draw dataHi to planeHi (D = (A & B) | (C & ~A)) ---
+3:      btst    #6,DMACONR(a2)
+        bne     3b
+
+        move.w  #-2,BLTBMOD(a2)
+
+4:      btst    #6,DMACONR(a2)
+        bne     4b
+
+        move.w  d0,d7                   | shift
+        lsl.w   #8,d7
+        lsl.w   #4,d7
+        move.w  d7,d1
+        or.w    #0x0FCA,d7              | channels A, B, C, D active, minterm = 0xCA
+        move.w  d7,BLTCON0(a2)
+        move.w  d1,BLTCON1(a2)
+
+        move.l  a3,BLTAPTH(a2)          | mask (A)
+        move.l  a4,BLTBPTH(a2)          | dataHi (B)
+        move.l  a0,BLTCPTH(a2)          | planeHi (C)
+        move.l  a0,BLTDPTH(a2)          | planeHi (D)
+
+        move.w  d3,d7
+        lsl.w   #6,d7
+        addq.w  #2,d7
+        move.w  d7,BLTSIZE(a2)          | start dataHi blit!
+
+        | --- BLIT 3: Draw dataLo to planeLo (D = (A & B) | (C & ~A)) ---
+5:      btst    #6,DMACONR(a2)
+        bne     5b
+
+        move.w  d0,d7
+        lsl.w   #8,d7
+        lsl.w   #4,d7
+        move.w  d7,d1
+        or.w    #0x0FCA,d7
+        move.w  d7,BLTCON0(a2)
+        move.w  d1,BLTCON1(a2)
+
+        move.l  a3,BLTAPTH(a2)          | mask (A)
+        move.l  a5,BLTBPTH(a2)          | dataLo (B)
+        move.l  a1,BLTCPTH(a2)          | planeLo (C)
+        move.l  a1,BLTDPTH(a2)          | planeLo (D)
+
+        move.w  d3,d7
+        lsl.w   #6,d7
+        addq.w  #2,d7
+        move.w  d7,BLTSIZE(a2)          | start dataLo blit!
+
+6:      btst    #6,DMACONR(a2)
+        bne     6b
 
         moveq   #0,d0
         bra.s   .db162_exit

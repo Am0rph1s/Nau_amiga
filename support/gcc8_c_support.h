@@ -49,6 +49,7 @@ void debug_save(const void* addr, unsigned int size, const char* name);
 
 #define EMBED __attribute__((aligned(2))) static const unsigned char
 #define EMBED_CHIP __attribute__((section(".INCBIN.MEMF_CHIP"))) __attribute__((aligned(2))) static const unsigned char
+#define CHIP_RAM_DATA __attribute__((section(".INCBIN.MEMF_CHIP"))) __attribute__((used)) __attribute__((aligned(2)))
 
 // INCBIN is deprectated, use EMBED instead
 #define INCBIN(name, file) INCBIN_SECTION(name, file, ".rodata", "")

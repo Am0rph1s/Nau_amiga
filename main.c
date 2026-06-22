@@ -131,7 +131,7 @@ static UWORD* g_SprDataA = 0;
 static UWORD* g_SprDataB = 0;
 static UWORD* g_SprDataActive = 0;
 static UWORD* g_SprDataBuild = 0;
-static UWORD* g_SprDataPending = 0;
+static UWORD* g_SprDataToLoad = 0;
 static short g_SprChannelShotActive[SPR_MAX_CHANNELS];
 static short g_SprChannelShotBuild[SPR_MAX_CHANNELS];
 
@@ -1014,27 +1014,13 @@ static UBYTE ReadJoy() {
 // INTERRUPT HANDLER
 // ============================================================================
 
-static volatile USHORT* g_PendingCop = 0;
-
 static __attribute__((interrupt)) void VBlankHandler() {
     custom->intreq = (1<<INTB_VERTB);
     custom->intreq = (1<<INTB_VERTB); // twice for A4000
-    if (g_PendingCop) {
-        custom->cop1lc = (ULONG)g_PendingCop;
-        g_PendingCop = 0;
-    }
-    custom->copjmp1 = 0;  // strobe: force copper to reload COP1LC immediately
-    if (g_SprDataPending && g_SprDataPending != g_SprDataActive) {
-        g_SprDataActive = g_SprDataPending;
-        g_SprDataPending = 0;
-        g_SprDataBuild = (g_SprDataActive == g_SprDataA) ? g_SprDataB : g_SprDataA;
-        for (int c = 0; c < SPR_MAX_CHANNELS; c++)
-            g_SprChannelShotActive[c] = g_SprChannelShotBuild[c];
-    }
-    // Set sprite pointers for all 8 channels — chip RAM has correct POS/CTL
-    if (g_SprDataActive) {
+    // Load the sprite data that was paired with the active Copper list for this frame
+    if (g_SprDataToLoad) {
         for (int s = 0; s < 8; s++) {
-            ULONG addr = (ULONG)(g_SprDataActive + s * SPR_CHAN_WORDS);
+            ULONG addr = (ULONG)(g_SprDataToLoad + s * SPR_CHAN_WORDS);
             volatile USHORT* ptr = (volatile USHORT*)(0xDFF120 + s * 4);
             ptr[0] = (USHORT)(addr >> 16);
             ptr[1] = (USHORT)addr;
@@ -1167,7 +1153,7 @@ static void UpdateSpriteData(UWORD* sprData) {
         // - Bit 1: VSTOP[8] (EV8)
         // - Bit 0: HSTART[0] (LSB)
         UWORD ctl = ((vstop & 0xFF) << 8) |
-                    (sv8 << 7) |
+                    ((chanIdx & 1) ? 0 : (sv8 << 7)) |
                     (sv8 << 2) |
                     (ev8 << 6) |
                     (ev8 << 1) |
@@ -1205,8 +1191,7 @@ static void UpdateSpriteData(UWORD* sprData) {
                 accentColor = 0xF00;
                 overlayColor = 0xF00;
             }
-            int p = c / 2;
-            int baseReg = 17 + p * 4;
+            int baseReg = 17 + (c / 2) * 4;
             if (baseReg + 2 < 32) {
                 g_Palette[baseReg]   = bodyColor;
                 g_Palette[baseReg+1] = accentColor;
@@ -1311,7 +1296,6 @@ static void DrawHud(UBYTE* buf, ULONG hp) {
 
 static void RenderFrame(UBYTE* screen_mem) {
     UpdateSpriteData(g_SprDataBuild);
-    g_SprDataPending = g_SprDataBuild;
     ClearGameArea(screen_mem);
     if (g_StarsEnabled) {
         for (int i = 0; i < N_STARS_1; i++) DrawPixel(screen_mem, g_Stars1[i].x, g_Stars1[i].y, 1);
@@ -1333,9 +1317,26 @@ static void RenderFrame(UBYTE* screen_mem) {
                 DrawShipAnim(screen_mem, g_ShipX, g_ShipY, (UBYTE)g_ShipPolarity);
             }
         }
+        static int log_counter = 0;
+        int do_log = 0;
+        if (++log_counter >= 150) {
+            log_counter = 0;
+            do_log = 1;
+            KPrintF("--- DIAGNOSTIC LOG ---\n");
+            KPrintF("g_EnemyBasic24Mask: %08lx, draw_buf: %08lx\n", (ULONG)g_EnemyBasic24Mask, (ULONG)screen_mem);
+        }
         for (int i = 0; i < MAX_ENEMIES; i++) {
             TEnemy* e = &g_Enemies[i];
             if (!e->active || e->health <= 0) continue;
+            if (do_log) {
+                KPrintF("Enemy %d: type=%d, x=%d, y=%d, active=%d, health=%d\n", i, e->type, e->x, e->y, e->active, e->health);
+            }
+            // Draw a diagnostic white dot on plane 1 (BPL2 = color index 1)
+            DrawPixel(screen_mem, e->x, e->y, 1);
+            DrawPixel(screen_mem, (short)(e->x + 1), e->y, 1);
+            DrawPixel(screen_mem, e->x, (short)(e->y + 1), 1);
+            DrawPixel(screen_mem, (short)(e->x + 1), (short)(e->y + 1), 1);
+
             switch (e->type) {
                 case ENEMY_TYPE_BASIC:
                     DrawBob32_2bpl(screen_mem, g_EnemyBasic24Mask,
@@ -1470,7 +1471,7 @@ int main() {
         }
         g_SprDataActive = g_SprDataA;
         g_SprDataBuild = g_SprDataB;
-        g_SprDataPending = 0;
+        g_SprDataToLoad = g_SprDataA;
         for (int c = 0; c < SPR_MAX_CHANNELS; c++) {
             g_SprChannelShotActive[c] = -1;
             g_SprChannelShotBuild[c] = -1;
@@ -1545,7 +1546,18 @@ int main() {
         }
         // Schedule copper swap at next VBlank
         { USHORT* tmp = cop_build; cop_build = cop_show; cop_show = tmp; }
-        g_PendingCop = cop_show;
+
+        // Set cop1lc and active sprites immediately before waiting for VBlank
+        custom->cop1lc = (ULONG)cop_show;
+
+        g_SprDataActive = g_SprDataBuild;
+        g_SprDataBuild = (g_SprDataActive == g_SprDataA) ? g_SprDataB : g_SprDataA;
+        for (int c = 0; c < SPR_MAX_CHANNELS; c++)
+            g_SprChannelShotActive[c] = g_SprChannelShotBuild[c];
+        g_SprDataToLoad = g_SprDataActive;
+
+        // Wait for VBlank
+        WaitVbl();
 
         // Swap buffers for next frame: the freshly rendered draw_buf becomes
         // show_buf, the old show_buf becomes the next render target
