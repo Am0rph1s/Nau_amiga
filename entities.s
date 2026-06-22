@@ -16,6 +16,7 @@
         .equ    TSHOT_Y,           2
         .equ    TSHOT_ACTIVE,      4
 
+
         .equ    TENEMY_SIZE,       26
         .equ    TENEMY_X,          0
         .equ    TENEMY_Y,          2
@@ -405,8 +406,7 @@ AsmCollideEnemiesShip:
         .global AsmCollideEnemyShotsShip
 AsmCollideEnemyShotsShip:
         tst.w   g_ShipExploding
-        bne     .acess_done
-
+        bne     .acess_cleanup
         movem.l d2-d7/a2,-(sp)
 
         lea     g_EnemyShots,a2
@@ -512,5 +512,7 @@ AsmCollideEnemyShotsShip:
 
 .acess_break:
         movem.l (sp)+,d2-d7/a2
+.acess_cleanup:
+        | cleanup removed
 .acess_done:
         rts

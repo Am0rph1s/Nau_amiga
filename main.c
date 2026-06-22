@@ -914,15 +914,28 @@ static short FindFreeEnemy() {
     return -1;
 }
 
-static void SpawnEnemy(short type) {
+// SpawnEnemy creates a new enemy instance.
+//
+// * X position is chosen within the game area and adjusted to avoid the HUD region (top HUD_H lines).
+// * Y position is now set to HUD_H, placing the enemy just below the HUD (the HUD occupies lines 0‑HUD_H‑1).
+//   This prevents enemies from appearing on top of the HUD.
+// * The function also initializes velocity, fire cooldown, and pattern state.
+//   See `nau_dx.h` for HUD_H definition (32 lines).
+//
+// Note: The enemy's `y` coordinate used to be `GAME_Y0 - ENEMY_H`, which placed the enemy off‑screen
+// and caused HUD overlap when the spawn logic later moved the enemy into view. The new value aligns
+// spawning with the visual layout.
+
     if (type < 0) return;
     short idx = FindFreeEnemy();
     if (idx < 0) return;
     TEnemy* e = &g_Enemies[idx];
     e->active = 1;
     e->type = type;
-    e->x = (short)(STAR_X0 + ((g_WaveSpawned * 37 + 13) % (STAR_W - ENEMY_W)));
-    e->y = GAME_Y0 - ENEMY_H;
+    short rawX = (short)(STAR_X0 + ((g_WaveSpawned * 37 + 13) % (STAR_W - ENEMY_W)));
+    if (rawX < HUD_H) rawX += HUD_H;
+    e->x = rawX;
+    e->y = HUD_H;
     e->vx = 0;
     e->fire_cd = 0;
     e->zig_timer = 0;
@@ -1105,6 +1118,10 @@ static void UpdateSpriteData(UWORD* sprData) {
         if (!g_Shots[i].active) continue;
         if (g_Shots[i].x < -SHOT_W || g_Shots[i].x >= SCREEN_W) continue;
         if (g_Shots[i].x > 126) continue;  // OCS HSTART wraps; draw with blitter fallback
+        // Skip shots that would appear within the HUD area (top 32 lines)
+        // short vstart_clip = 44 + g_Shots[i].y;  // removed, using y directly
+if (g_Shots[i].y < HUD_H) continue; // Skip shots that would appear within the HUD area
+
         int pair = -1;
         for (int p = SPR_FIRST_USABLE_PAIR; p < SPR_FIRST_USABLE_PAIR + SPR_USABLE_PAIRS; p++) {
             if (g_SprPairShotBuild[p] < 0) {
@@ -1116,10 +1133,10 @@ static void UpdateSpriteData(UWORD* sprData) {
         g_SprPairShotBuild[pair] = i;
         TShot* shot = &g_Shots[i];
         short hstart = 129 + shot->x;
-        short vstart = 44 + shot->y;
-        UWORD pos = ((UWORD)vstart << 8) | ((UWORD)((hstart >> 1) & 0xFF));
-        UWORD vstop = (UWORD)(vstart + SPR_SHOT_ROWS) & 0x0F;
-        UWORD evenCtl = (vstop << 8) | ((((UWORD)vstart >> 8) & 1) << 7) | ((UWORD)hstart & 1);
+        short vstart_s = 44 + shot->y;
+        UWORD pos = ((UWORD)vstart_s << 8) | ((UWORD)((hstart >> 1) & 0xFF));
+        UWORD vstop = (UWORD)(vstart_s + SPR_SHOT_ROWS) & 0x0F;
+        UWORD evenCtl = (vstop << 8) | ((((UWORD)vstart_s >> 8) & 1) << 7) | ((UWORD)hstart & 1);
         UWORD oddCtl  = (vstop << 8) | (1 << 7) | ((UWORD)hstart & 1);
         UWORD* even = sprData + pair * 2 * SPR_CHAN_WORDS;
         UWORD* odd  = even + SPR_CHAN_WORDS;
@@ -1132,23 +1149,22 @@ static void UpdateSpriteData(UWORD* sprData) {
         even[10] = 0; even[11] = 0;
         odd[10]  = 0; odd[11]  = 0;
     }
-    // Mark unused pairs as off-screen — clear data words, set POS/CTL to VSTART=300
+    // Mark unused pairs as off-screen — clear data words and disable sprites
     for (int p = 0; p < SPR_MAX_PAIRS; p++) {
         if (g_SprPairShotBuild[p] >= 0) continue;
         UWORD* even = sprData + p * 2 * SPR_CHAN_WORDS;
         UWORD* odd  = even + SPR_CHAN_WORDS;
-        short vstart = 300;
-        short vstop  = (short)((vstart + SPR_SHOT_ROWS) & 0x0F);
-        even[0] = ((USHORT)(vstart & 0xFF) << 8);                 // VSTART[7:0]
-        even[1] = (UWORD)(vstop << 8) | ((((UWORD)vstart >> 8) & 1) << 7);
-        odd[0]  = even[0];
-        odd[1]  = (UWORD)(vstop << 8) | (1 << 7);                // ATT=1
+        // Ensure ATT bit is cleared (bit 7) and POS/CTL zeroed for unused sprite pairs
+        even[0] = 0; // POS low bits cleared
+        even[1] = 0; // CTL cleared, ATT=0 disables DMA
+        odd[0]  = 0;
+        odd[1]  = 0;
         for (int w = 2; w < SPR_CHAN_WORDS; w++) {
             even[w] = 0;
             odd[w]  = 0;
         }
+
     }
-    // Update sprite palette in g_Palette for attached pairs
     for (int p = 0; p < SPR_MAX_PAIRS; p++) {
         int idx = g_SprPairShotBuild[p];
         UWORD bodyColor = 0;
@@ -1165,13 +1181,12 @@ static void UpdateSpriteData(UWORD* sprData) {
                 overlayColor = 0xF00;
             }
         }
-        if (p < SPR_MAX_PAIRS) {
-            int baseReg = 17 + p * 4;
-            if (baseReg + 2 < 32) {
-                g_Palette[baseReg]   = bodyColor;
-                g_Palette[baseReg+1] = accentColor;
-                g_Palette[baseReg+2] = overlayColor;
-            }
+        // Set palette registers for this pair if within range
+        int baseReg = 17 + p * 4;
+        if (baseReg + 2 < 32) {
+            g_Palette[baseReg] = bodyColor;
+            g_Palette[baseReg+1] = accentColor;
+            g_Palette[baseReg+2] = overlayColor;
         }
     }
 }
@@ -1295,7 +1310,7 @@ static void RenderFrame(UBYTE* screen_mem) {
         }
         for (int i = 0; i < MAX_ENEMIES; i++) {
             TEnemy* e = &g_Enemies[i];
-            if (!e->active) continue;
+            if (!e->active || e->health <= 0) continue;
             switch (e->type) {
                 case ENEMY_TYPE_BASIC:
                     DrawBob32_2bpl(screen_mem, g_EnemyBasic24Mask,
@@ -1314,7 +1329,8 @@ static void RenderFrame(UBYTE* screen_mem) {
             }
         }
         for (int i = 0; i < MAX_SHOTS; i++) {
-            if (!g_Shots[i].active) continue;
+            if (!g_Shots[i].active) continue; // Skip inactive shots
+            if (g_Shots[i].y < HUD_H) continue; // Skip drawing player shots in HUD area
             // Check if this shot has a HW sprite slot currently active.
             // If it is only planned for the next frame, draw it in software this frame.
             int hasSpr = 0;
@@ -1338,7 +1354,8 @@ static void RenderFrame(UBYTE* screen_mem) {
             }
         }
         for (int i = 0; i < MAX_ENEMY_SHOTS; i++) {
-            if (!g_EnemyShots[i].active) continue;
+            if (!g_EnemyShots[i].active) continue; // Skip inactive enemy shots
+            if (g_EnemyShots[i].y < HUD_H) continue; // Skip drawing enemy shots in HUD area
             if (g_EnemyShots[i].variant == 0) {
                 DrawBob16_2bpl(screen_mem, g_EShotW_Mask, g_EShotW_DataHi, g_EShotW_DataLo,
                                g_EnemyShots[i].x, g_EnemyShots[i].y, 1, 5, 4);
