@@ -37,34 +37,37 @@ ClearGameAreaAsm:
 
         | --- Plane 1 (BPL2) = screen + 10240 ---
         lea     10240(a0),a1
-        move.w  #255,d5
+        move.w  #255,d7
 .cga_p1:
-        movem.l d0-d7,(a1)              | 32 bytes (d0-d7)
+        movem.l d0-d6,(a1)              | 28 bytes (d0-d6)
+        clr.l   28(a1)                  | bytes 28-31
         clr.l   32(a1)                  | bytes 32-35
         clr.l   36(a1)                  | bytes 36-39
         lea     40(a1),a1
-        dbra    d5,.cga_p1
+        dbra    d7,.cga_p1
 
         | --- Plane 3 (BPL4) = screen + 30720 ---
         lea     30720(a0),a1
-        move.w  #255,d5
+        move.w  #255,d7
 .cga_p3:
-        movem.l d0-d7,(a1)
+        movem.l d0-d6,(a1)
+        clr.l   28(a1)
         clr.l   32(a1)
         clr.l   36(a1)
         lea     40(a1),a1
-        dbra    d5,.cga_p3
+        dbra    d7,.cga_p3
 
         | --- Plane 5 (BPL6) = screen + 51200 ---
         lea     30720(a0),a1
         lea     20480(a1),a1
-        move.w  #255,d5
+        move.w  #255,d7
 .cga_p5:
-        movem.l d0-d7,(a1)
+        movem.l d0-d6,(a1)
+        clr.l   28(a1)
         clr.l   32(a1)
         clr.l   36(a1)
         lea     40(a1),a1
-        dbra    d5,.cga_p5
+        dbra    d7,.cga_p5
 
         movem.l (sp)+,d0-d7
         rts
@@ -698,9 +701,15 @@ DrawBob16d2Asm:
         mulu    #10240,d0
         move.l  a2,a1
         adda.l  d0,a1                   | a1 = planeLo
-        | plane5
-        lea     30720(a2),a6
-        lea     20480(a6),a6            | a6 = plane5
+        | Calculate pointer to the third PF2 plane (whichever of 1,3,5 is not planeHi/planeLo)
+        | At this point: d5=planeHi, d4=planeLo, d7=x, d6=y
+        | pl3rd = 9 - planeHi - planeLo
+        moveq   #9,d0
+        sub.w   d5,d0
+        sub.w   d4,d0                   | d0 = pl3rd index (uses d5=planeHi, d4=planeLo)
+        mulu    #10240,d0
+        move.l  a2,a6
+        adda.l  d0,a6                   | a6 = ptr to third PF2 plane
 
         | wx = x >> 4, byte offset = wx * 2
         move.w  d7,d2
@@ -749,11 +758,7 @@ DrawBob16d2Asm:
         and.w   d0,d5
         or.w    d5,(a1,d1.w)
 
-        | Clear plane5 in mask area — skip when plane5 is a data plane
-        cmpi.w  #5,d7                    | d7 = planeHi
-        beq     .db162_clr_skip
-        cmpi.w  #5,d6                    | d6 = planeLo
-        beq     .db162_clr_skip
+        | Always clear the third PF2 plane in the mask area
         move.w  d0,d4
         not.w   d4
         and.w   d4,(a6,d1.w)

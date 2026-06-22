@@ -120,20 +120,20 @@ __attribute__((always_inline)) inline short MouseRight() { return !((*(volatile 
 #define PLANE_BYTES (ROW_BYTES * SCREEN_H)
 
 // ============================================================================
-// HW SPRITE MULTIPLEXING (player shots, 4 attached pairs)
+// HW SPRITE MULTIPLEXING (player shots, 3 unattached channels)
 // ============================================================================
-#define SPR_CHAN_WORDS 12
-#define SPR_MAX_PAIRS 4
-#define SPR_FIRST_USABLE_PAIR 2
-#define SPR_USABLE_PAIRS 2
+#define SPR_CHAN_WORDS 20
+#define SPR_MAX_CHANNELS 8
+#define SPR_USABLE_COUNT 3
 #define SPR_SHOT_ROWS 8
+static const int g_SprUsableChannels[SPR_USABLE_COUNT] = { 2, 4, 6 };
 static UWORD* g_SprDataA = 0;
 static UWORD* g_SprDataB = 0;
 static UWORD* g_SprDataActive = 0;
 static UWORD* g_SprDataBuild = 0;
 static UWORD* g_SprDataPending = 0;
-static short g_SprPairShotActive[SPR_MAX_PAIRS];
-static short g_SprPairShotBuild[SPR_MAX_PAIRS];
+static short g_SprChannelShotActive[SPR_MAX_CHANNELS];
+static short g_SprChannelShotBuild[SPR_MAX_CHANNELS];
 
 // ============================================================================
 // PARALLAX SCROLL
@@ -349,12 +349,13 @@ static void DrawBob32_2bpl(UBYTE* screen_mem,
         if (wx + 2 < ROW_BYTES / 2) {
             plo[base+2] = (UWORD)((plo[base+2] & ~mv2) | (lv2 & mv2));
         }
-        // Clear plane 5 (PF2 bit 2) in mask area — only if not a data plane
-        if (planeHi != 5 && planeLo != 5) {
-            UWORD* pl5 = (UWORD*)(screen_mem + 5 * PLANE_BYTES);
-            if (base < (ROW_BYTES/2) * SCREEN_H) pl5[base] &= ~mv0;
-            if (wx + 1 < ROW_BYTES / 2) pl5[base+1] &= ~mv1;
-            if (wx + 2 < ROW_BYTES / 2) pl5[base+2] &= ~mv2;
+        // Always clear the third PF2 plane in mask area (same fix as DrawBob16_2bpl)
+        {
+            UBYTE pl3rd = (UBYTE)(1 + 3 + 5 - planeHi - planeLo);
+            UWORD* p3rd = (UWORD*)(screen_mem + pl3rd * PLANE_BYTES);
+            if (base < (ROW_BYTES/2) * SCREEN_H) p3rd[base] &= ~mv0;
+            if (wx + 1 < ROW_BYTES / 2) p3rd[base+1] &= ~mv1;
+            if (wx + 2 < ROW_BYTES / 2) p3rd[base+2] &= ~mv2;
         }
     }
 }
@@ -423,12 +424,15 @@ static void DrawBob16_2bpl(UBYTE* screen_mem,
         plo[base]   = (UWORD)((plo[base]   & ~mv0) | (lv0 & mv0));
         if (wx + 1 < ROW_BYTES / 2)
             plo[base+1] = (UWORD)((plo[base+1] & ~mv1) | (lv1 & mv1));
-        // Clear plane 5 (PF2 bit 2) in mask area — only if not a data plane
-        if (planeHi != 5 && planeLo != 5) {
-            UWORD* pl5 = (UWORD*)(screen_mem + 5 * PLANE_BYTES);
-            pl5[base]   &= ~mv0;
+        // Always clear the third PF2 plane (whichever of 1,3,5 is not planeHi/planeLo).
+        // This prevents stale bits from other draws (ship, enemies) combining with shot
+        // data to produce unexpected colors (e.g., colour 5 = 0x0212 dark over grey bg).
+        {
+            UBYTE pl3rd = (UBYTE)(1 + 3 + 5 - planeHi - planeLo); // the remaining PF2 plane
+            UWORD* p3rd = (UWORD*)(screen_mem + pl3rd * PLANE_BYTES);
+            p3rd[base]   &= ~mv0;
             if (wx + 1 < ROW_BYTES / 2)
-                pl5[base+1] &= ~mv1;
+                p3rd[base+1] &= ~mv1;
         }
     }
 }
@@ -926,6 +930,7 @@ static short FindFreeEnemy() {
 // and caused HUD overlap when the spawn logic later moved the enemy into view. The new value aligns
 // spawning with the visual layout.
 
+static void SpawnEnemy(short type) {
     if (type < 0) return;
     short idx = FindFreeEnemy();
     if (idx < 0) return;
@@ -1023,8 +1028,8 @@ static __attribute__((interrupt)) void VBlankHandler() {
         g_SprDataActive = g_SprDataPending;
         g_SprDataPending = 0;
         g_SprDataBuild = (g_SprDataActive == g_SprDataA) ? g_SprDataB : g_SprDataA;
-        for (int p = 0; p < SPR_MAX_PAIRS; p++)
-            g_SprPairShotActive[p] = g_SprPairShotBuild[p];
+        for (int c = 0; c < SPR_MAX_CHANNELS; c++)
+            g_SprChannelShotActive[c] = g_SprChannelShotBuild[c];
     }
     // Set sprite pointers for all 8 channels — chip RAM has correct POS/CTL
     if (g_SprDataActive) {
@@ -1064,7 +1069,7 @@ static void BuildCopperListEx(USHORT* cop, const UBYTE** hud_planes,
 
     cop = copSetReg(cop, 0x100, (6<<12) | (1<<10));               // BPLCON0
     cop = copSetReg(cop, 0x102, 0);                                // BPLCON1
-    cop = copSetReg(cop, 0x104, (1<<6) | (2<<2) | (0<<0));        // BPLCON2 (PF2PRI=1, PF2OF=1, PF1OF=0)
+    cop = copSetReg(cop, 0x104, (1<<6) | (4<<3) | (4<<0));        // BPLCON2 (PF2PRI=1, PF2P=4, PF1P=4 -> all sprites on top)
     cop = copSetReg(cop, 0x108, 0);                                // BPL1MOD
     cop = copSetReg(cop, 0x10A, 0);                                // BPL2MOD
 
@@ -1110,67 +1115,87 @@ static void BuildCopperListEx(USHORT* cop, const UBYTE** hud_planes,
 // ============================================================================
 
 static void UpdateSpriteData(UWORD* sprData) {
-    // Mark all pairs as unused in the build buffer
-    for (int p = 0; p < SPR_MAX_PAIRS; p++)
-        g_SprPairShotBuild[p] = -1;
-    // Assign active shots to sprite pairs
+    // Disable and clear all 8 channels by default in the build buffer
+    for (int c = 0; c < SPR_MAX_CHANNELS; c++) {
+        g_SprChannelShotBuild[c] = -1;
+        UWORD* chan = sprData + c * SPR_CHAN_WORDS;
+        chan[0] = 0xFF00;   // VSTART[7:0] = 0xFF, HSTART = 0
+        if (c & 1) {
+            chan[1] = 0x0000;   // ATT = 0, VSTOP = 0
+        } else {
+            chan[1] = 0x0084;   // VSTART[8] = 1 (bit 7 and bit 2), VSTOP = 0 -> VSTART = 511
+        }
+        for (int w = 2; w < SPR_CHAN_WORDS; w++) {
+            chan[w] = 0;
+        }
+    }
+
+    // Assign active shots to sprite channels 2, 4, 6
     for (int i = 0; i < MAX_SHOTS; i++) {
         if (!g_Shots[i].active) continue;
         if (g_Shots[i].x < -SHOT_W || g_Shots[i].x >= SCREEN_W) continue;
-        if (g_Shots[i].x > 126) continue;  // OCS HSTART wraps; draw with blitter fallback
+        // Clip shots to stay within visible screen area (prevent left-side artifacts)
+        if (g_Shots[i].x < 0 || g_Shots[i].x > (SCREEN_W - SHOT_W)) continue; // Skip out‑of‑bounds shots
         // Skip shots that would appear within the HUD area (top 32 lines)
-        // short vstart_clip = 44 + g_Shots[i].y;  // removed, using y directly
-if (g_Shots[i].y < HUD_H) continue; // Skip shots that would appear within the HUD area
+        if (g_Shots[i].y < HUD_H) continue; // Skip shots that would appear within the HUD area
 
-        int pair = -1;
-        for (int p = SPR_FIRST_USABLE_PAIR; p < SPR_FIRST_USABLE_PAIR + SPR_USABLE_PAIRS; p++) {
-            if (g_SprPairShotBuild[p] < 0) {
-                pair = p;
+        int chanIdx = -1;
+        for (int u = 0; u < SPR_USABLE_COUNT; u++) {
+            int c = g_SprUsableChannels[u];
+            if (g_SprChannelShotBuild[c] < 0) {
+                chanIdx = c;
                 break;
             }
         }
-        if (pair < 0) continue;
-        g_SprPairShotBuild[pair] = i;
+        if (chanIdx < 0) continue; // No free sprite channel, will fall back to blitter
+        g_SprChannelShotBuild[chanIdx] = i;
+
         TShot* shot = &g_Shots[i];
         short hstart = 129 + shot->x;
         short vstart_s = 44 + shot->y;
-        UWORD pos = ((UWORD)vstart_s << 8) | ((UWORD)((hstart >> 1) & 0xFF));
-        UWORD vstop = (UWORD)(vstart_s + SPR_SHOT_ROWS) & 0x0F;
-        UWORD evenCtl = (vstop << 8) | ((((UWORD)vstart_s >> 8) & 1) << 7) | ((UWORD)hstart & 1);
-        UWORD oddCtl  = (vstop << 8) | (1 << 7) | ((UWORD)hstart & 1);
-        UWORD* even = sprData + pair * 2 * SPR_CHAN_WORDS;
-        UWORD* odd  = even + SPR_CHAN_WORDS;
-        even[0] = pos;  even[1] = evenCtl;
-        odd[0]  = pos;  odd[1]  = oddCtl;
-        for (int r = 0; r < SPR_SHOT_ROWS; r++) {
-            even[2+r] = g_ShotSpr_Body[r];
-            odd[2+r]  = g_ShotSpr_Accent[r];
-        }
-        even[10] = 0; even[11] = 0;
-        odd[10]  = 0; odd[11]  = 0;
-    }
-    // Mark unused pairs as off-screen — clear data words and disable sprites
-    for (int p = 0; p < SPR_MAX_PAIRS; p++) {
-        if (g_SprPairShotBuild[p] >= 0) continue;
-        UWORD* even = sprData + p * 2 * SPR_CHAN_WORDS;
-        UWORD* odd  = even + SPR_CHAN_WORDS;
-        // Ensure ATT bit is cleared (bit 7) and POS/CTL zeroed for unused sprite pairs
-        even[0] = 0; // POS low bits cleared
-        even[1] = 0; // CTL cleared, ATT=0 disables DMA
-        odd[0]  = 0;
-        odd[1]  = 0;
-        for (int w = 2; w < SPR_CHAN_WORDS; w++) {
-            even[w] = 0;
-            odd[w]  = 0;
-        }
+        UWORD pos = ((UWORD)(vstart_s & 0xFF) << 8) | ((UWORD)((hstart >> 1) & 0xFF));
+        UWORD vstop = (UWORD)(vstart_s + SPR_SHOT_ROWS);
 
+        UWORD sv8 = ((UWORD)vstart_s >> 8) & 1;
+        UWORD ev8 = ((UWORD)vstop >> 8) & 1;
+
+        // Even channel control word format:
+        // - Bits 15-8: VSTOP[7:0]
+        // - Bit 7: VSTART[8] (SV8)
+        // - Bit 2: VSTART[8] (SV8)
+        // - Bit 6: VSTOP[8] (EV8)
+        // - Bit 1: VSTOP[8] (EV8)
+        // - Bit 0: HSTART[0] (LSB)
+        UWORD ctl = ((vstop & 0xFF) << 8) |
+                    (sv8 << 7) |
+                    (sv8 << 2) |
+                    (ev8 << 6) |
+                    (ev8 << 1) |
+                    ((UWORD)hstart & 1);
+
+        UWORD* chan = sprData + chanIdx * SPR_CHAN_WORDS;
+        chan[0] = pos;
+        chan[1] = ctl;
+
+        // Write 2-bitplane image data directly to this single channel:
+        // - Plane 0 (SPRxDATA) gets the Body graphics
+        // - Plane 1 (SPRxDATB) gets the Accent graphics
+        for (int r = 0; r < SPR_SHOT_ROWS; r++) {
+            chan[2 + r*2] = g_ShotSpr_Body[r];     // SPRxDATA (plane 0)
+            chan[3 + r*2] = g_ShotSpr_Accent[r];   // SPRxDATB (plane 1)
+        }
+        chan[18] = 0;
+        chan[19] = 0;
     }
-    for (int p = 0; p < SPR_MAX_PAIRS; p++) {
-        int idx = g_SprPairShotBuild[p];
-        UWORD bodyColor = 0;
-        UWORD accentColor = 0;
-        UWORD overlayColor = 0;
+
+    // Update sprite palettes
+    for (int u = 0; u < SPR_USABLE_COUNT; u++) {
+        int c = g_SprUsableChannels[u];
+        int idx = g_SprChannelShotBuild[c];
         if (idx >= 0) {
+            UWORD bodyColor = 0;
+            UWORD accentColor = 0;
+            UWORD overlayColor = 0;
             if (g_Shots[idx].variant == 0) {
                 bodyColor = 0xFFF;
                 accentColor = 0x0CF;
@@ -1180,13 +1205,13 @@ if (g_Shots[i].y < HUD_H) continue; // Skip shots that would appear within the H
                 accentColor = 0xF00;
                 overlayColor = 0xF00;
             }
-        }
-        // Set palette registers for this pair if within range
-        int baseReg = 17 + p * 4;
-        if (baseReg + 2 < 32) {
-            g_Palette[baseReg] = bodyColor;
-            g_Palette[baseReg+1] = accentColor;
-            g_Palette[baseReg+2] = overlayColor;
+            int p = c / 2;
+            int baseReg = 17 + p * 4;
+            if (baseReg + 2 < 32) {
+                g_Palette[baseReg]   = bodyColor;
+                g_Palette[baseReg+1] = accentColor;
+                g_Palette[baseReg+2] = overlayColor;
+            }
         }
     }
 }
@@ -1334,8 +1359,8 @@ static void RenderFrame(UBYTE* screen_mem) {
             // Check if this shot has a HW sprite slot currently active.
             // If it is only planned for the next frame, draw it in software this frame.
             int hasSpr = 0;
-            for (int p = 0; p < SPR_MAX_PAIRS; p++)
-                if (g_SprPairShotActive[p] == i) { hasSpr = 1; break; }
+            for (int c = 0; c < SPR_MAX_CHANNELS; c++)
+                if (g_SprChannelShotActive[c] == i) { hasSpr = 1; break; }
             if (hasSpr) continue;
             short flip = g_FrameCounter & 1;
             if (g_Shots[i].variant == 0) {
@@ -1413,7 +1438,6 @@ int main() {
     UBYTE* hud_buf = (UBYTE*)AllocMem(hud_plane_bytes * BG_BPL, MEMF_CHIP | MEMF_CLEAR);
     if (!hud_buf) { FreeMem(screen_mem, buf_size * 2); CloseLibrary((struct Library*)DOSBase); CloseLibrary((struct Library*)GfxBase); Exit(0); }
 
-    // --- Allocate pre-rendered background buffer (PF1 only, 3 planes × 1024 rows) ---
     UBYTE* bg_buf = (UBYTE*)AllocMem(BG_PLANE_BYTES * BG_BPL, MEMF_CHIP | MEMF_CLEAR);
     if (!bg_buf) { FreeMem(screen_mem, buf_size * 2); FreeMem(hud_buf, hud_plane_bytes * BG_BPL); CloseLibrary((struct Library*)DOSBase); CloseLibrary((struct Library*)GfxBase); Exit(0); }
     InitTilemapBG(bg_buf);
@@ -1433,7 +1457,7 @@ int main() {
 
     // --- Allocate HW sprite chip RAM (4 attached pairs × 2 channels × 12 words) ---
     {
-        const ULONG sprDataSize = SPR_MAX_PAIRS * 2 * SPR_CHAN_WORDS * sizeof(UWORD);
+        const ULONG sprDataSize = SPR_MAX_CHANNELS * SPR_CHAN_WORDS * sizeof(UWORD);
         g_SprDataA = (UWORD*)AllocMem(sprDataSize, MEMF_CHIP | MEMF_CLEAR);
         g_SprDataB = (UWORD*)AllocMem(sprDataSize, MEMF_CHIP | MEMF_CLEAR);
         if (!g_SprDataA || !g_SprDataB) {
@@ -1447,9 +1471,9 @@ int main() {
         g_SprDataActive = g_SprDataA;
         g_SprDataBuild = g_SprDataB;
         g_SprDataPending = 0;
-        for (int p = 0; p < SPR_MAX_PAIRS; p++) {
-            g_SprPairShotActive[p] = -1;
-            g_SprPairShotBuild[p] = -1;
+        for (int c = 0; c < SPR_MAX_CHANNELS; c++) {
+            g_SprChannelShotActive[c] = -1;
+            g_SprChannelShotBuild[c] = -1;
         }
     }
 
@@ -1483,8 +1507,8 @@ int main() {
             ptr[0] = (USHORT)(addr >> 16);
             ptr[1] = (USHORT)addr;
             volatile USHORT* pos = (volatile USHORT*)(0xDFF140 + s*8);
-            pos[0] = ((USHORT)(300 & 0xFF) << 8);  // VSTART[7:0]=44
-            pos[1] = (1 << 7);                       // VSTART[8]=1 → VSTART=300
+            pos[0] = ((USHORT)(300 & 0xFF) << 8);
+            pos[1] = (s & 1) ? 0x0000 : 0x0084;  // ATT=0 for odd, SV8=1 (bit 7 and bit 2) for even -> VSTART=300
         }
     }
 
