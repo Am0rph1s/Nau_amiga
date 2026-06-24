@@ -1066,9 +1066,12 @@ static void BuildCopperListEx(USHORT* cop, const UBYTE** hud_planes,
     cop = copSetReg(cop, 0x10A, 0);                                // BPL2MOD
 
     // Set colors for the HUD (lines 0 to 76)
-    cop = copSetColor(cop, 1, 0x0CF);                             // Squares = blue
-    cop = copSetColor(cop, 6, 0x777);                             // Separator = gray
-    cop = copSetColor(cop, 7, 0xFFF);                             // Text = white
+    cop = copSetColor(cop, 1, 0x0CF);                             // active chain block = blue/cyan
+    cop = copSetColor(cop, 2, 0xFD0);                             // SCORE label = gold/yellow
+    cop = copSetColor(cop, 3, 0xF44);                             // LIVES label / red polarity = red
+    cop = copSetColor(cop, 4, 0x3DF);                             // CHAIN label = cyan
+    cop = copSetColor(cop, 6, 0x666);                             // Separators = dark gray
+    cop = copSetColor(cop, 7, 0xFFF);                             // Text values / white polarity = white
 
     // --- PF1: HUD (top 32 lines), PF2: game buffer ---
     // Absolute copper register addresses (0x0E0 = BPL1PTH, 0x0E8 = BPL3PTH, 0x0F0 = BPL5PTH)
@@ -1326,15 +1329,15 @@ static void DrawHud(UBYTE* buf, ULONG hp) {
     }
 
     // Section 1: SCORE (x=8, y=12)
-    DrawHudText(buf, hp, 8, 12, 7, "SCORE:");
+    DrawHudText(buf, hp, 8, 12, 2, "SCORE:");
     DrawHudNumber5x7(buf, hp, 50, 12, 7, g_Score, 5);
 
     // Section 2: LIVES (x=110, y=12)
-    DrawHudText(buf, hp, 108, 12, 7, "LIVES:");
+    DrawHudText(buf, hp, 108, 12, 3, "LIVES:");
     DrawHudNumber5x7(buf, hp, 156, 12, 7, g_Lives, 1);
 
     // Section 3: CHAIN (x=190, y=12)
-    DrawHudText(buf, hp, 190, 12, 7, "CHAIN:");
+    DrawHudText(buf, hp, 190, 12, 4, "CHAIN:");
     // Draw 3 glowing 5x5 energy blocks for chain count (color 1 = blue)
     for (int i = 0; i < 3; i++) {
         short dx = (short)(234 + i * 12);
@@ -1354,7 +1357,7 @@ static void DrawHud(UBYTE* buf, ULONG hp) {
     // Section 4: POLARITY (x=290, y=12)
     short px_start = 295;
     short py_start = 11;
-    UBYTE pol_col = (g_ShipPolarity == 0) ? 7 : 1; // white or blue
+    UBYTE pol_col = (g_ShipPolarity == 0) ? 7 : 3; // white or red
     for (int py = 0; py < 10; py++) {
         for (int px = 0; px < 10; px++) {
             if (px == 0 || px == 9 || py == 0 || py == 9) {
