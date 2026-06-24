@@ -1608,7 +1608,7 @@ int main() {
         // Build copper: PF1 from bg_buf (with scroll), PF2 from draw_buf
         {
             const UBYTE* pf1[3] = { bg_buf + 0*BG_PLANE_BYTES, bg_buf + 1*BG_PLANE_BYTES, bg_buf + 2*BG_PLANE_BYTES };
-            const UBYTE* hud[3] = { hud_show + 0*hud_plane_bytes, hud_show + 1*hud_plane_bytes, hud_show + 2*hud_plane_bytes };
+            const UBYTE* hud[3] = { hud_draw + 0*hud_plane_bytes, hud_draw + 1*hud_plane_bytes, hud_draw + 2*hud_plane_bytes };
             const UBYTE* pf2[3] = { draw_buf + 1*plane_size, draw_buf + 3*plane_size, draw_buf + 5*plane_size };
             BuildCopperListEx(cop_build, hud, pf1, pf2, g_BGScrollY);
         }
