@@ -776,6 +776,12 @@ __attribute__((externally_visible)) short          g_Lives      = 3;
 static short          g_Level      = 1;
 __attribute__((externally_visible)) unsigned short g_NextLifeAt = EXTRA_LIFE_EVERY;
 
+static unsigned short g_HudLastScore = 9999;
+static short g_HudLastLives = -1;
+static short g_HudLastAbsorb = -1;
+static short g_HudLastPolarity = -1;
+static short g_HudDirtyFrames = 2;
+
 // Wave state
 static short g_WaveActive   = 0;
 static short g_WaveTotal    = 0;
@@ -1306,11 +1312,11 @@ static void DrawHud(UBYTE* buf, ULONG hp) {
     for (int pl = 0; pl < 3; pl++)
         memset(buf + pl * hp, 0, hp);
 
-    // Border lines (color 6)
-    for (int hx = 0; hx < SCREEN_W; hx++) {
-        HudSetPixel(buf, hp, hx, 0, 6);
-        HudSetPixel(buf, hp, hx, 31, 6);
-    }
+    // Border lines (color 6 = planes 1 & 2 are 1, plane 0 is 0)
+    memset(buf + 1 * hp, 0xFF, ROW_BYTES);
+    memset(buf + 2 * hp, 0xFF, ROW_BYTES);
+    memset(buf + 1 * hp + 31 * ROW_BYTES, 0xFF, ROW_BYTES);
+    memset(buf + 2 * hp + 31 * ROW_BYTES, 0xFF, ROW_BYTES);
 
     // Vertical separators (color 6)
     for (int hy = 4; hy < 28; hy++) {
@@ -1602,8 +1608,24 @@ int main() {
         // Render next frame (copper is showing show_buf, NOT draw_buf)
         RenderFrame(draw_buf);
 
-        // Redraw HUD each frame
-        DrawHud(hud_draw, hud_plane_bytes);
+        // Check if HUD state changed
+        if (g_Score != g_HudLastScore ||
+            g_Lives != g_HudLastLives ||
+            g_AbsorbCount != g_HudLastAbsorb ||
+            g_ShipPolarity != g_HudLastPolarity) {
+            
+            g_HudLastScore = g_Score;
+            g_HudLastLives = g_Lives;
+            g_HudLastAbsorb = g_AbsorbCount;
+            g_HudLastPolarity = g_ShipPolarity;
+            g_HudDirtyFrames = 2; // Mark both double-buffers as dirty
+        }
+
+        // Redraw HUD only if dirty
+        if (g_HudDirtyFrames > 0) {
+            DrawHud(hud_draw, hud_plane_bytes);
+            g_HudDirtyFrames--;
+        }
 
         // Build copper: PF1 from bg_buf (with scroll), PF2 from draw_buf
         {
