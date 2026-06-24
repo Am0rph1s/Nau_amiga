@@ -1060,7 +1060,6 @@ static void BuildCopperListEx(USHORT* cop, const UBYTE** hud_planes,
     cop = copSetReg(cop, 0x10A, 0);                                // BPL2MOD
 
     // Set colors for the HUD (lines 0 to 76)
-    cop = copSetColor(cop, 0, 0x000);                             // Background = black
     cop = copSetColor(cop, 1, 0x0CF);                             // Squares = blue
     cop = copSetColor(cop, 6, 0x777);                             // Separator = gray
     cop = copSetColor(cop, 7, 0xFFF);                             // Text = white
@@ -1207,18 +1206,29 @@ static void UpdateSpriteData(UWORD* sprData) {
     }
 }
 
-// 3×5 bitmap font (bits 7,6,5 = left,middle,right pixel)
-static const UBYTE font_3x5[10][5] = {
-    {0xE0,0xA0,0xA0,0xA0,0xE0}, // 0
-    {0x40,0xC0,0x40,0x40,0xE0}, // 1
-    {0xE0,0x20,0xE0,0x80,0xE0}, // 2
-    {0xE0,0x20,0xE0,0x20,0xE0}, // 3
-    {0xA0,0xA0,0xE0,0x20,0x20}, // 4
-    {0xE0,0x80,0xE0,0x20,0xE0}, // 5
-    {0xE0,0x80,0xE0,0xA0,0xE0}, // 6
-    {0xE0,0x20,0x20,0x20,0x20}, // 7
-    {0xE0,0xA0,0xE0,0xA0,0xE0}, // 8
-    {0xE0,0xA0,0xE0,0x20,0xE0}, // 9
+static const UBYTE font_5x7[22][7] = {
+    {0x3E,0x62,0x62,0x62,0x62,0x62,0x3E}, // 0
+    {0x08,0x18,0x08,0x08,0x08,0x08,0x1C}, // 1
+    {0x3E,0x42,0x02,0x3C,0x40,0x80,0x7E}, // 2
+    {0x3E,0x42,0x02,0x3C,0x02,0x42,0x3E}, // 3
+    {0x06,0x0E,0x16,0x26,0x7E,0x06,0x06}, // 4
+    {0x7E,0x40,0x7C,0x02,0x02,0x42,0x3E}, // 5
+    {0x1E,0x20,0x40,0x7C,0x42,0x42,0x3E}, // 6
+    {0x7E,0x02,0x04,0x08,0x10,0x20,0x40}, // 7
+    {0x3E,0x42,0x42,0x3E,0x42,0x42,0x3E}, // 8
+    {0x3E,0x42,0x42,0x3E,0x02,0x04,0x38}, // 9
+    {0x10,0x28,0x44,0x82,0xFE,0x82,0x82}, // 10: A
+    {0x3E,0x40,0x40,0x3E,0x02,0x02,0x3E}, // 11: S
+    {0x3C,0x42,0x40,0x40,0x40,0x42,0x3C}, // 12: C
+    {0x3E,0x42,0x42,0x42,0x42,0x42,0x3E}, // 13: O
+    {0x7C,0x42,0x42,0x7C,0x48,0x44,0x42}, // 14: R
+    {0x7E,0x40,0x40,0x7C,0x40,0x40,0x7E}, // 15: E
+    {0x40,0x40,0x40,0x40,0x40,0x40,0x7E}, // 16: L
+    {0x3E,0x08,0x08,0x08,0x08,0x08,0x3E}, // 17: I
+    {0x42,0x42,0x42,0x24,0x24,0x18,0x10}, // 18: V
+    {0x42,0x42,0x42,0x7E,0x42,0x42,0x42}, // 19: H
+    {0x42,0x62,0x52,0x4A,0x46,0x42,0x42}, // 20: N
+    {0x00,0x08,0x08,0x00,0x08,0x08,0x00}, // 21: :
 };
 
 static void HudSetPixel(UBYTE* buf, ULONG hp, short hx, short hy, UBYTE col) {
@@ -1231,22 +1241,63 @@ static void HudSetPixel(UBYTE* buf, ULONG hp, short hx, short hy, UBYTE col) {
     }
 }
 
-static void DrawHudDigit(UBYTE* buf, ULONG hp, short hx, short hy, UBYTE col, UBYTE ch) {
-    if (ch < '0' || ch > '9') return;
-    const UBYTE* pat = font_3x5[ch - '0'];
-    for (int r = 0; r < 5; r++)
-        for (int px = 0; px < 3; px++)
-            if (pat[r] & (0x80 >> px))
-                HudSetPixel(buf, hp, (short)(hx + px), (short)(hy + r), col);
+static short GetFontIndex(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    switch (c) {
+        case 'A': return 10;
+        case 'S': return 11;
+        case 'C': return 12;
+        case 'O': return 13;
+        case 'R': return 14;
+        case 'E': return 15;
+        case 'L': return 16;
+        case 'I': return 17;
+        case 'V': return 18;
+        case 'H': return 19;
+        case 'N': return 20;
+        case ':': return 21;
+    }
+    return -1;
 }
 
-static void DrawHudNumber(UBYTE* buf, ULONG hp, short hx, short hy, UBYTE col, unsigned short num) {
-    char d[6]; int n = 0;
-    if (num == 0) { d[n++] = '0'; }
-    else { while (num && n < 6) { d[n++] = (char)('0' + num % 10); num /= 10; } }
+static void DrawHudText(UBYTE* buf, ULONG hp, short hx, short hy, UBYTE col, const char* str) {
+    while (*str) {
+        short idx = GetFontIndex(*str);
+        if (idx >= 0) {
+            const UBYTE* pat = font_5x7[idx];
+            for (int r = 0; r < 7; r++) {
+                UBYTE row_data = pat[r];
+                for (int px = 0; px < 5; px++) {
+                    if (row_data & (0x80 >> px)) {
+                        HudSetPixel(buf, hp, (short)(hx + px), (short)(hy + r), col);
+                    }
+                }
+            }
+        }
+        hx += 6;
+        str++;
+    }
+}
+
+static void DrawHudNumber5x7(UBYTE* buf, ULONG hp, short hx, short hy, UBYTE col, unsigned short num, short min_digits) {
+    char d[6];
+    int n = 0;
+    unsigned short temp = num;
+    if (temp == 0) {
+        d[n++] = '0';
+    } else {
+        while (temp > 0 && n < 5) {
+            d[n++] = (char)('0' + (temp % 10));
+            temp /= 10;
+        }
+    }
+    while (n < min_digits && n < 5) {
+        d[n++] = '0';
+    }
     for (int i = n - 1; i >= 0; i--) {
-        DrawHudDigit(buf, hp, hx, hy, col, (UBYTE)d[i]);
-        hx = (short)(hx + 4); // 3 wide + 1 gap
+        char s[2] = { d[i], 0 };
+        DrawHudText(buf, hp, hx, hy, col, s);
+        hx += 6;
     }
 }
 
@@ -1255,48 +1306,57 @@ static void DrawHud(UBYTE* buf, ULONG hp) {
     for (int pl = 0; pl < 3; pl++)
         memset(buf + pl * hp, 0, hp);
 
-    // Separator line at y=31 (color 6 = planes 1+2)
-    UBYTE sep_col = 6;
+    // Border lines (color 6)
     for (int hx = 0; hx < SCREEN_W; hx++) {
-        UWORD offs = (UWORD)(31 * ROW_BYTES + (hx >> 3));
-        UBYTE m = (UBYTE)(0x80 >> (hx & 7));
-        for (int pl = 0; pl < 3; pl++)
-            if (sep_col & (1 << pl))
-                buf[pl * hp + offs] |= m;
+        HudSetPixel(buf, hp, hx, 0, 6);
+        HudSetPixel(buf, hp, hx, 31, 6);
     }
 
-    // Score at (8, 4), right-aligned, color 7
-    short sx = 8;
-    // Draw "S" manually as 3x5: 111, 100, 111, 001, 111
-    UBYTE sdata[5] = {0xE0,0x80,0xE0,0x20,0xE0};
-    for (int r = 0; r < 5; r++)
-        for (int px = 0; px < 3; px++)
-            if (sdata[r] & (0x80 >> px))
-                HudSetPixel(buf, hp, (short)(sx + px), (short)(4 + r), 7);
-    DrawHudNumber(buf, hp, (short)(sx + 16), 4, 7, g_Score);
+    // Vertical separators (color 6)
+    for (int hy = 4; hy < 28; hy++) {
+        HudSetPixel(buf, hp, 96, hy, 6);
+        HudSetPixel(buf, hp, 180, hy, 6);
+        HudSetPixel(buf, hp, 280, hy, 6);
+    }
 
-    // Lives at (8, 14)
-    // Draw "L" as 3x5: 100, 100, 100, 100, 111
-    UBYTE ldata[5] = {0x80,0x80,0x80,0x80,0xE0};
-    for (int r = 0; r < 5; r++)
-        for (int px = 0; px < 3; px++)
-            if (ldata[r] & (0x80 >> px))
-                HudSetPixel(buf, hp, (short)(sx + px), (short)(14 + r), 7);
-    DrawHudNumber(buf, hp, (short)(sx + 8), 14, 7, (unsigned short)g_Lives);
+    // Section 1: SCORE (x=8, y=12)
+    DrawHudText(buf, hp, 8, 12, 7, "SCORE:");
+    DrawHudNumber5x7(buf, hp, 50, 12, 7, g_Score, 5);
 
-    // Polarity indicator at (280, 4)
-    UBYTE pol_col = (g_ShipPolarity == 0) ? 7 : 1; // white or blue
-    for (int py = 0; py < 8; py++)
-        for (int px = 0; px < 8; px++)
-            HudSetPixel(buf, hp, (short)(280 + px), (short)(4 + py), pol_col);
+    // Section 2: LIVES (x=110, y=12)
+    DrawHudText(buf, hp, 108, 12, 7, "LIVES:");
+    DrawHudNumber5x7(buf, hp, 156, 12, 7, g_Lives, 1);
 
-    // Chain dots at (250, 14)
+    // Section 3: CHAIN (x=190, y=12)
+    DrawHudText(buf, hp, 190, 12, 7, "CHAIN:");
+    // Draw 3 glowing 5x5 energy blocks for chain count (color 1 = blue)
     for (int i = 0; i < 3; i++) {
-        short dx = (short)(250 + i * 10);
-        for (int py = 0; py < 4; py++)
-            for (int px = 0; px < 4; px++)
-                if (i < g_AbsorbCount)
-                    HudSetPixel(buf, hp, (short)(dx + px), (short)(14 + py), 1);
+        short dx = (short)(234 + i * 12);
+        for (int py = 0; py < 5; py++) {
+            for (int px = 0; px < 5; px++) {
+                if (i < g_AbsorbCount) {
+                    HudSetPixel(buf, hp, (short)(dx + px), (short)(13 + py), 1);
+                } else {
+                    if (px == 0 || px == 4 || py == 0 || py == 4) {
+                        HudSetPixel(buf, hp, (short)(dx + px), (short)(13 + py), 6);
+                    }
+                }
+            }
+        }
+    }
+
+    // Section 4: POLARITY (x=290, y=12)
+    short px_start = 295;
+    short py_start = 11;
+    UBYTE pol_col = (g_ShipPolarity == 0) ? 7 : 1; // white or blue
+    for (int py = 0; py < 10; py++) {
+        for (int px = 0; px < 10; px++) {
+            if (px == 0 || px == 9 || py == 0 || py == 9) {
+                HudSetPixel(buf, hp, (short)(px_start + px), (short)(py_start + py), 6);
+            } else if (px >= 2 && px <= 7 && py >= 2 && py <= 7) {
+                HudSetPixel(buf, hp, (short)(px_start + px), (short)(py_start + py), pol_col);
+            }
+        }
     }
 }
 
