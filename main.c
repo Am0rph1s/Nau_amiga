@@ -1060,6 +1060,99 @@ static void EnemyFire(void) {
     }
 }
 
+void SpawnExplosion(int x, int y, int kind);
+
+static void CollideShotsEnemies(void) {
+    for (int e_idx = 0; e_idx < MAX_ENEMIES; e_idx++) {
+        TEnemy* e = &g_Enemies[e_idx];
+        if (!e->active || e->health <= 0) continue;
+
+        for (int s_idx = 0; s_idx < MAX_SHOTS; s_idx++) {
+            TShot* shot = &g_Shots[s_idx];
+            if (!shot->active) continue;
+
+            // Collision check (AABB: Shot is 4x16, Enemy is 24x24)
+            if (shot->x + 4 > e->x && shot->x < e->x + ENEMY_W &&
+                shot->y + 16 > e->y && shot->y < e->y + ENEMY_H) {
+                
+                // Collision detected! Deactivate player shot
+                shot->active = 0;
+
+                // Determine damage based on polarity
+                short same_polarity = (e->variant == shot->variant);
+                short damage = same_polarity ? 1 : 2;
+
+                e->health -= damage;
+                if (e->health <= 0) {
+                    // Enemy dies!
+                    e->active = 0;
+                    g_WaveKilled++;
+
+                    // Score update
+                    short pts = (e->type == ENEMY_TYPE_FAST) ? ENEMY_SCORE_FAST : ENEMY_SCORE_BASIC;
+                    g_Score += pts;
+
+                    // Extra life check
+                    if (g_Score >= g_NextLifeAt) {
+                        g_Lives++;
+                        g_NextLifeAt += EXTRA_LIFE_EVERY;
+                    }
+
+                    // Spawn explosion
+                    SpawnExplosion(e->x, e->y, EXP_KIND_ENEMY);
+
+                    // Revenge burst of 3 fast aimed bullets (only if killed by SAME polarity shot)
+                    if (same_polarity && e->type == ENEMY_TYPE_FAST) {
+                        int spawned = 0;
+                        for (int s = 0; s < MAX_ENEMY_SHOTS && spawned < 3; s++) {
+                            if (!g_EnemyShots[s].active) {
+                                TEnemyShot* es = &g_EnemyShots[s];
+                                es->active = 1;
+                                es->x = e->x + 8;
+                                es->y = e->y + 8;
+                                es->variant = e->variant; // matching polarity
+
+                                // Aim toward main ship
+                                short targetX = g_ShipX + 9;
+                                short targetY = g_ShipY + 12;
+                                short dx = targetX - es->x;
+                                short dy = targetY - es->y;
+                                
+                                short abs_dx = (dx < 0) ? -dx : dx;
+                                short abs_dy = (dy < 0) ? -dy : dy;
+                                short dist = abs_dx + abs_dy;
+                                
+                                short base_vx = 0;
+                                short base_vy = 5; // Fast revenge bullets (speed 5)
+                                if (dist != 0) {
+                                    base_vx = (short)((dx * 5) / dist);
+                                    base_vy = (short)((dy * 5) / dist);
+                                }
+
+                                // 3-way spread
+                                if (spawned == 0) {
+                                    es->vx = base_vx;
+                                    es->vy = base_vy;
+                                } else if (spawned == 1) {
+                                    es->vx = base_vx - 1;
+                                    es->vy = base_vy;
+                                } else {
+                                    es->vx = base_vx + 1;
+                                    es->vy = base_vy;
+                                }
+                                spawned++;
+                            }
+                        }
+                    }
+
+                    // Stop checking other shots for this enemy
+                    break;
+                }
+            }
+        }
+    }
+}
+
 static void SpawnEnemy(short type) {
     if (type < 0) return;
     short idx = FindFreeEnemy();
@@ -1067,7 +1160,7 @@ static void SpawnEnemy(short type) {
     TEnemy* e = &g_Enemies[idx];
     e->active = 1;
     e->type = ENEMY_TYPE_FAST;
-    e->health = 1;
+    e->health = 4; // Fast enemies have 4 health points (Ikaruga mechanic)
     e->y = -16;
     e->vx = 0;
     e->vy = 3;
@@ -1138,6 +1231,29 @@ static UBYTE ReadJoy() {
 
     return res;
 }
+
+static UBYTE PollKeyboard(void) {
+    volatile UBYTE* ciaa_icr = (volatile UBYTE*)0xBFED01;
+    volatile UBYTE* ciaa_sdr = (volatile UBYTE*)0xBFEC01;
+    volatile UBYTE* ciaa_cra = (volatile UBYTE*)0xBFEE01;
+    
+    UBYTE icr = *ciaa_icr;
+    if (icr & (1 << 3)) { // SDR interrupt flag (serial register full)
+        UBYTE rawkey = *ciaa_sdr;
+        UBYTE keycode = (UBYTE)~rawkey;
+        
+        // Handshake CIA-A Serial Port
+        UBYTE cra = *ciaa_cra;
+        *ciaa_cra = (UBYTE)(cra | (1 << 6)); // Set SPMode to output
+        for (volatile int i = 0; i < 100; i++);
+        *ciaa_cra = (UBYTE)(cra & ~(1 << 6)); // Set SPMode back to input
+        
+        return keycode;
+    }
+    return 0;
+}
+
+static UBYTE g_SpaceWasPressed = 0;
 
 // ============================================================================
 // INTERRUPT HANDLER
@@ -1836,6 +1952,23 @@ int main() {
                 if ((joy & JOY_UP)    && g_ShipY > SHIP_MIN_Y) g_ShipY -= SHIP_SPEED_Y;
                 if ((joy & JOY_DOWN)  && g_ShipY < SHIP_MAX_Y) g_ShipY += SHIP_SPEED_Y;
 
+                // Spacebar keyboard instant polarity switch
+                {
+                    UBYTE k = PollKeyboard();
+                    short spacePressed = (k == 0x40) ? 1 : 0;
+                    short spaceReleased = (k == 0xC0) ? 1 : 0;
+                    if (spaceReleased) {
+                        g_SpaceWasPressed = 0;
+                    }
+                    if (spacePressed && !g_SpaceWasPressed) {
+                        g_SpaceWasPressed = 1;
+                        short newPol = g_ShipPolarity ? 0 : 1;
+                        g_ForceFieldTransition = 4;
+                        g_ForceFieldSweepDir   = newPol ? 0 : 1;
+                        g_ShipPolarity = newPol;
+                    }
+                }
+
                 // Fire on press edge + hold to toggle polarity (stays on release)
                 {
                     short fireNow = (joy & JOY_FIRE) ? 1 : 0;
@@ -1933,8 +2066,8 @@ int main() {
             // --- Update enemies (68k ASM: just movement + off-screen) ---
             UpdateEnemies();
 
-            // Collision checks (68k ASM)
-            AsmCollideShotsEnemies();
+            // Collision checks
+            CollideShotsEnemies();
             AsmCollideEnemiesShip();
 
             // --- Update enemy shots (C-based aimed shots) ---

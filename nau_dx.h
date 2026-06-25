@@ -45,7 +45,7 @@
 #define SHOT_W          4
 #define SHOT_H          16
 #define FIRE_COOLDOWN   3
-#define POLARITY_HOLD_FRAMES  4  // frames of holding fire to switch polarity
+#define POLARITY_HOLD_FRAMES  6  // frames of holding fire to switch polarity
 
 // --- Enemy types ------------------------------------------------------------
 #define ENEMY_TYPE_BASIC    0
