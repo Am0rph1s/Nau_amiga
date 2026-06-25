@@ -1233,24 +1233,39 @@ static UBYTE ReadJoy() {
 }
 
 static UBYTE PollKeyboard(void) {
-    volatile UBYTE* ciaa_icr = (volatile UBYTE*)0xBFED01;
-    volatile UBYTE* ciaa_sdr = (volatile UBYTE*)0xBFEC01;
-    volatile UBYTE* ciaa_cra = (volatile UBYTE*)0xBFEE01;
+    // CIA-A register map (byte access at odd addresses on 16-bit bus)
+    volatile UBYTE* ciaa_icr = (volatile UBYTE*)0xBFED01;  // Interrupt Control Register
+    volatile UBYTE* ciaa_sdr = (volatile UBYTE*)0xBFEC01;  // Serial Data Register
+    volatile UBYTE* ciaa_cra = (volatile UBYTE*)0xBFEE01;  // Control Register A
     
+    // Bit 3 of ICR = SP flag: set when 8 bits have been shifted into SDR
     UBYTE icr = *ciaa_icr;
-    if (icr & (1 << 3)) { // SDR interrupt flag (serial register full)
-        UBYTE rawkey = *ciaa_sdr;
-        UBYTE keycode = (UBYTE)~rawkey;
-        
-        // Handshake CIA-A Serial Port
-        UBYTE cra = *ciaa_cra;
-        *ciaa_cra = (UBYTE)(cra | (1 << 6)); // Set SPMode to output
-        for (volatile int i = 0; i < 100; i++);
-        *ciaa_cra = (UBYTE)(cra & ~(1 << 6)); // Set SPMode back to input
-        
-        return keycode;
-    }
-    return 0;
+    if (!(icr & (1 << 3))) return 0;   // nothing ready
+    
+    // Read raw byte from SDR.
+    // The keyboard transmits bits in order 6-5-4-3-2-1-0-7 (last bit = key-up flag).
+    // Hardware Reference Manual: decode = NOT(rawkey) rotated right by 1.
+    //   NOT first, then ROR #1 → puts key-up flag in bit 7, code in bits 6..0.
+    UBYTE rawkey  = *ciaa_sdr;
+    UBYTE inverted = (UBYTE)~rawkey;
+    // C equivalent of ror.b #1: shift right 1, wrap old bit 0 → new bit 7
+    UBYTE keycode = (UBYTE)((inverted >> 1) | ((inverted & 1) << 7));
+    
+    // Handshake: pulse KDAT (SP pin) low for ≥85 µs.
+    // Method: set SPMODE (CRA bit 6) = output → CIA drives SP low → wait → restore.
+    // Use VHPOSR scanlines for timing: 1 scanline ≈ 64 µs (PAL).
+    // Wait 2 scanlines ≈ 128 µs, well above the 85 µs minimum.
+    volatile UWORD* vhposr = (volatile UWORD*)0xDFF006;
+    UBYTE cra = *ciaa_cra;
+    *ciaa_cra = (UBYTE)(cra | (1 << 6));       // SPMode = output (KDAT driven low)
+    UWORD t0 = (UWORD)(*vhposr >> 8) & 0xFF;   // current raster line (bits [8..1])
+    UWORD t1;
+    do { t1 = (UWORD)(*vhposr >> 8) & 0xFF; } while (t1 == t0);  // wait line 1
+    t0 = t1;
+    do { t1 = (UWORD)(*vhposr >> 8) & 0xFF; } while (t1 == t0);  // wait line 2
+    *ciaa_cra = (UBYTE)(cra & ~(1 << 6));      // SPMode = input (release KDAT)
+    
+    return keycode;
 }
 
 static UBYTE g_SpaceWasPressed = 0;
