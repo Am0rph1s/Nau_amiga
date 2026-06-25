@@ -67,7 +67,7 @@
 #define PATT_DIAGONAL   2
 
 // --- Enemy shots ------------------------------------------------------------
-#define MAX_ENEMY_SHOTS     32
+#define MAX_ENEMY_SHOTS     48
 #define ENEMYSHOT_SPEED_Y   5
 #define ENEMYSHOT_COOLDOWN  18
 #define ENEMYSHOT_STAGGER   5

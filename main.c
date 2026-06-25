@@ -260,15 +260,22 @@ static void InitTilemapBG(UBYTE* bg_buf) {
 static void DrawBob16(UBYTE* screen_mem,
                       const UWORD* mask, const UWORD* data,
                       short x, short y, UBYTE colorMask, UWORD rows) {
+    if (x <= -16 || x >= SCREEN_W || y <= -(short)rows || y >= SCREEN_H) return;
+    if (y < HUD_H) {
+        UWORD skip = (UWORD)(HUD_H - y);
+        mask += skip;
+        data += skip;
+        rows = (rows > skip) ? rows - skip : 0;
+        y = HUD_H;
+    }
+    if (y + (short)rows > SCREEN_H) rows = (UWORD)(SCREEN_H - y);
+    if (rows == 0) return;
+
     if (!DrawBob16Asm(screen_mem, mask, data, x, y, colorMask, rows))
         return;
-    if (x <= -16 || x >= SCREEN_W || y <= -(short)rows || y >= SCREEN_H) return;
     UWORD shift = (UWORD)(x & 15);
     const UWORD* m = mask;
     const UWORD* d = data;
-    if (y < 0) { UWORD skip = (UWORD)(-y); m += skip; d += skip; rows = (rows > skip) ? rows - skip : 0; y = 0; }
-    if (y + (short)rows > SCREEN_H) rows = (UWORD)(SCREEN_H - y);
-    if (rows == 0) return;
     UWORD wx = (UWORD)(x < 0 ? 0 : x) >> 4;
     static const UBYTE pf2_planes[3] = { 1, 3, 5 };
     for (UWORD row = 0; row < rows; row++) {
@@ -300,18 +307,24 @@ static void DrawBob16(UBYTE* screen_mem,
 static void DrawBob32_2bpl(UBYTE* screen_mem,
                            const UWORD* mask, const UWORD* dataHi, const UWORD* dataLo,
                            short x, short y, UBYTE planeHi, UBYTE planeLo) {
-    if (!DrawBob32d2Asm(screen_mem, mask, dataHi, dataLo, x, y, planeHi, planeLo))
-        return;
     if (x <= -32 || x >= SCREEN_W || y <= -24 || y >= SCREEN_H) return;
-    UWORD shift = (UWORD)(x & 15);
     UWORD rows  = 24;
     const UWORD* m = mask;
     const UWORD* dh = dataHi;
     const UWORD* dl = dataLo;
-    if (y < 0) { UWORD skip = (UWORD)(-y)*2; m += skip; dh += skip; dl += skip; rows = (UWORD)(24+y); y = 0; }
+    if (y < HUD_H) {
+        UWORD skip = (UWORD)(HUD_H - y);
+        m += skip*2; dh += skip*2; dl += skip*2;
+        rows = (rows > skip) ? rows - skip : 0;
+        y = HUD_H;
+    } else {
+        if (!DrawBob32d2Asm(screen_mem, mask, dataHi, dataLo, x, y, planeHi, planeLo))
+            return;
+    }
     if (y + (short)rows > SCREEN_H) rows = (UWORD)(SCREEN_H - y);
     if (rows == 0) return;
     UWORD wx = (UWORD)(x < 0 ? 0 : x) >> 4;
+    UWORD shift = (UWORD)(x & 15);
     for (UWORD row = 0; row < rows; row++) {
         UWORD m0 = m[row*2],   m1 = m[row*2+1];
         UWORD h0 = dh[row*2],  h1 = dh[row*2+1];
@@ -393,16 +406,24 @@ static void OrBPL4(UBYTE* screen_mem, const UWORD* data,
 static void DrawBob16_2bpl(UBYTE* screen_mem,
                            const UWORD* mask, const UWORD* dataHi, const UWORD* dataLo,
                            short x, short y, UBYTE planeHi, UBYTE planeLo, UWORD rows) {
+    if (x <= -16 || x >= SCREEN_W || y <= -(short)rows || y >= SCREEN_H) return;
+    if (y < HUD_H) {
+        UWORD skip = (UWORD)(HUD_H - y);
+        mask += skip;
+        dataHi += skip;
+        dataLo += skip;
+        rows = (rows > skip) ? rows - skip : 0;
+        y = HUD_H;
+    }
+    if (y + (short)rows > SCREEN_H) rows = (UWORD)(SCREEN_H - y);
+    if (rows == 0) return;
+
     if (!DrawBob16d2Asm(screen_mem, mask, dataHi, dataLo, x, y, planeHi, planeLo, rows))
         return;
-    if (x <= -16 || x >= SCREEN_W || y <= -(short)rows || y >= SCREEN_H) return;
     UWORD shift = (UWORD)(x & 15);
     const UWORD* m = mask;
     const UWORD* dh = dataHi;
     const UWORD* dl = dataLo;
-    if (y < 0) { m += (UWORD)(-y); dh += (UWORD)(-y); dl += (UWORD)(-y); rows = (UWORD)(rows+y); y = 0; }
-    if (y + (short)rows > SCREEN_H) rows = (UWORD)(SCREEN_H - y);
-    if (rows == 0) return;
     UWORD wx = (UWORD)(x < 0 ? 0 : x) >> 4;
     for (UWORD row = 0; row < rows; row++) {
         UWORD mw = m[row], hw = dh[row], lw = dl[row];
@@ -802,7 +823,7 @@ static THiScore *g_HiScores;
 // ============================================================================
 
 static const TLevelConfig g_Levels[ENDGAME_FINAL_LEVEL] = {
-    /* 1*/  { 3, 3, LMASK_BASIC,                       0 },
+    /* 1*/  { 1, 8, LMASK_FAST,                       0 },
     /* 2*/  { 3, 4, LMASK_BASIC|LMASK_FAST,            0 },
     /* 3*/  { 4, 3, LMASK_BASIC|LMASK_FAST,            0 },
     /* 4*/  { 4, 4, LMASK_BASIC|LMASK_FAST,            0 },
@@ -936,25 +957,132 @@ static short FindFreeEnemy() {
 // and caused HUD overlap when the spawn logic later moved the enemy into view. The new value aligns
 // spawning with the visual layout.
 
+static void UpdateEnemies(void) {
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        TEnemy* e = &g_Enemies[i];
+        if (!e->active) continue;
+
+        if (e->type == ENEMY_TYPE_FAST) {
+            if (e->variant == 0) { // Fast A (Left side)
+                if (e->vy > 0 && e->y >= 144) {
+                    // Turn right
+                    e->vy = 0;
+                    e->vx = 3;
+                } else if (e->vx > 0 && e->x >= 148) {
+                    // Turn up
+                    e->vx = 0;
+                    e->vy = -3;
+                }
+            } else { // Fast B (Right side)
+                if (e->vy > 0 && e->y >= 144) {
+                    // Turn left
+                    e->vy = 0;
+                    e->vx = -3;
+                } else if (e->vx < 0 && e->x <= 156) {
+                    // Turn up
+                    e->vx = 0;
+                    e->vy = -3;
+                }
+            }
+        } else {
+            e->vx = 0;
+            e->vy = ENEMY_SPEED_BASIC;
+        }
+
+        e->x += e->vx;
+        e->y += e->vy;
+
+        // Check if exited screen boundaries
+        if (e->y > GAME_H || e->y < -24 || e->x < -24 || e->x > SCREEN_W + 24) {
+            e->active = 0;
+            g_WaveKilled++;
+        }
+    }
+}
+
+static void UpdateEnemyShots(void) {
+    for (int i = 0; i < MAX_ENEMY_SHOTS; i++) {
+        TEnemyShot* s = &g_EnemyShots[i];
+        if (!s->active) continue;
+
+        s->x += s->vx;
+        s->y += s->vy;
+
+        // Clip/Deactivate if off screen (left, right, bottom, top)
+        if (s->y >= SCREEN_H || s->y < -16 || s->x < -16 || s->x >= SCREEN_W) {
+            s->active = 0;
+        }
+    }
+}
+
+static void EnemyFire(void) {
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        TEnemy* e = &g_Enemies[i];
+        if (!e->active || e->health <= 0) continue;
+
+        // Burst firing: cycle of 64 frames (~1.3s), active window of 16 frames, fire every 8 frames
+        short cycle_time = (short)((g_FrameCounter + i * 17) % 64);
+        if (cycle_time < 16 && (cycle_time % 8) == 0) {
+            int shotIdx = -1;
+            for (int s = 0; s < MAX_ENEMY_SHOTS; s++) {
+                if (!g_EnemyShots[s].active) {
+                    shotIdx = s;
+                    break;
+                }
+            }
+            if (shotIdx < 0) continue;
+
+            TEnemyShot* s = &g_EnemyShots[shotIdx];
+            s->active = 1;
+            // Spawn at center of enemy (enemy is 16px wide visually)
+            s->x = e->x + 8;
+            s->y = e->y + 16;
+            s->variant = e->variant; // matching polarity
+
+            // Aim toward main ship
+            short targetX = g_ShipX + 9;  // ship center X (18/2)
+            short targetY = g_ShipY + 12; // ship center Y (24/2)
+            short dx = targetX - s->x;
+            short dy = targetY - s->y;
+            
+            // Speed approximation (target speed = 4)
+            short abs_dx = (dx < 0) ? -dx : dx;
+            short abs_dy = (dy < 0) ? -dy : dy;
+            short dist = abs_dx + abs_dy;
+            if (dist == 0) {
+                s->vx = 0;
+                s->vy = 4;
+            } else {
+                s->vx = (short)((dx * 4) / dist);
+                s->vy = (short)((dy * 4) / dist);
+            }
+        }
+    }
+}
+
 static void SpawnEnemy(short type) {
     if (type < 0) return;
     short idx = FindFreeEnemy();
     if (idx < 0) return;
     TEnemy* e = &g_Enemies[idx];
     e->active = 1;
-    e->type = type;
-    short rawX = (short)(STAR_X0 + ((g_WaveSpawned * 37 + 13) % (STAR_W - ENEMY_W)));
-    if (rawX < HUD_H) rawX += HUD_H;
-    e->x = rawX;
-    e->y = HUD_H;
+    e->type = ENEMY_TYPE_FAST;
+    e->health = 1;
+    e->y = -16;
     e->vx = 0;
+    e->vy = 3;
     e->fire_cd = 0;
     e->zig_timer = 0;
     e->pattern = PATT_STRAIGHT;
-    e->variant = (short)((g_FrameCounter + g_WaveSpawned) & 1);  // alternate white/black
-    switch (type) {
-        case ENEMY_TYPE_BASIC:  e->health = 1; e->vy = ENEMY_SPEED_BASIC;  break;
-        case ENEMY_TYPE_FAST:   e->health = 1; e->vy = ENEMY_SPEED_FAST;   break;
+
+    if (g_WaveSpawned < 4) {
+        // Fast A (Left side)
+        e->x = 48;
+        e->variant = 0;
+    } else {
+        // Fast B (Right side)
+        e->x = SCREEN_W - 48 - 16; // 256
+        e->variant = 1;
     }
 }
 
@@ -977,14 +1105,9 @@ __attribute__((externally_visible)) void SpawnExplosion(int x, int y, int kind) 
 // energy will be released later as a special attack (TBD: power shot or
 // bomb). A brief flash marks the absorption point.
 __attribute__((externally_visible)) void AbsorbEnemyShot(int enemyShotIdx) {
-    short ex = g_EnemyShots[enemyShotIdx].x;
-    short ey = g_EnemyShots[enemyShotIdx].y;
     g_EnemyShots[enemyShotIdx].active = 0;
 
     if (g_AbsorbCount < CHAIN_MAX) g_AbsorbCount++;
-
-    // Brief visual feedback: small light-grey flash at the absorption point.
-    SpawnExplosion(ex, ey, EXP_KIND_ENEMY);
 }
 
 // ============================================================================
@@ -1406,13 +1529,7 @@ static void RenderFrame(UBYTE* screen_mem) {
             if (do_log) {
                 KPrintF("Enemy %d: type=%d, x=%d, y=%d, active=%d, health=%d\n", i, e->type, e->x, e->y, e->active, e->health);
             }
-            // Draw a diagnostic white dot on plane 1 (BPL2 = color index 1)
-            DrawPixel(screen_mem, e->x, e->y, 1);
-            DrawPixel(screen_mem, (short)(e->x + 1), e->y, 1);
-            DrawPixel(screen_mem, e->x, (short)(e->y + 1), 1);
-            DrawPixel(screen_mem, (short)(e->x + 1), (short)(e->y + 1), 1);
-
-            switch (e->type) {
+             switch (e->type) {
                 case ENEMY_TYPE_BASIC:
                     DrawBob32_2bpl(screen_mem, g_EnemyBasic24Mask,
                                    e->variant ? g_EnemyBasic24InvHi : g_EnemyBasic24Hi,
@@ -1420,10 +1537,25 @@ static void RenderFrame(UBYTE* screen_mem) {
                                    e->x, e->y, 1, 3);
                     break;
                 case ENEMY_TYPE_FAST:
-                    DrawBob16_2bpl(screen_mem, g_EnemyFast16Mask,
-                                   e->variant ? g_EnemyFast16InvHi : g_EnemyFast16Hi,
-                                   e->variant ? g_EnemyFast16InvLo : g_EnemyFast16Lo,
-                                   e->x, e->y, 1, 3, 16);
+                    {
+                        short f = 0;
+                        if (e->vy > 0) f = 0;      // Down
+                        else if (e->vx > 0) f = 1; // Right
+                        else if (e->vy < 0) f = 2; // Up
+                        else if (e->vx < 0) f = 3; // Left
+
+                        if (e->variant == 0) {
+                            // Polarity A: White/Black/Blue on BPL2 & BPL6 (planes 1 and 5)
+                            DrawBob16_2bpl(screen_mem, g_EnemyFast16Mask_Frames[f],
+                                           g_EnemyFast16Hi_Frames[f], g_EnemyFast16Lo_Frames[f],
+                                           e->x, e->y, 1, 5, 16);
+                        } else {
+                            // Polarity B: White/Black/Red on BPL2 & BPL4 (planes 1 and 3)
+                            DrawBob16_2bpl(screen_mem, g_EnemyFast16InvMask_Frames[f],
+                                           g_EnemyFast16InvHi_Frames[f], g_EnemyFast16InvLo_Frames[f],
+                                           e->x, e->y, 1, 3, 16);
+                        }
+                    }
                     break;
                 default:
                     break;  // BOSS and unknown types handled elsewhere
@@ -1457,6 +1589,10 @@ static void RenderFrame(UBYTE* screen_mem) {
         for (int i = 0; i < MAX_ENEMY_SHOTS; i++) {
             if (!g_EnemyShots[i].active) continue; // Skip inactive enemy shots
             if (g_EnemyShots[i].y < HUD_H) continue; // Skip drawing enemy shots in HUD area
+            
+            // Flickering: draw only on alternate frames based on index to halve Blitter CPU/DMA load
+            if (((i + g_FrameCounter) & 1) == 0) continue;
+
             if (g_EnemyShots[i].variant == 0) {
                 DrawBob16_2bpl(screen_mem, g_EShotW_Mask, g_EShotW_DataHi, g_EShotW_DataLo,
                                g_EnemyShots[i].x, g_EnemyShots[i].y, 1, 5, 4);
@@ -1786,7 +1922,7 @@ int main() {
                     }
                     if (allDead) {
                         g_WaveActive = 0;
-                        g_Level++;
+                        g_Level = 1;
                     }
                 }
             }
@@ -1795,20 +1931,20 @@ int main() {
             AsmUpdatePlayerShots();
 
             // --- Update enemies (68k ASM: just movement + off-screen) ---
-            AsmUpdateEnemies();
+            UpdateEnemies();
 
             // Collision checks (68k ASM)
             AsmCollideShotsEnemies();
             AsmCollideEnemiesShip();
 
-            // --- Update enemy shots (68k ASM: just movement + off-screen) ---
-            AsmUpdateEnemyShots();
+            // --- Update enemy shots (C-based aimed shots) ---
+            UpdateEnemyShots();
 
             // Enemy shot vs ship / dome interaction (68k ASM)
             AsmCollideEnemyShotsShip();
 
-            // --- Enemy firing (68k ASM) ---
-            AsmEnemyFire();
+            // --- Enemy firing (C-based aimed shots) ---
+            EnemyFire();
 
             // --- Update explosions (68k ASM) ---
             AsmUpdateExplosions();
