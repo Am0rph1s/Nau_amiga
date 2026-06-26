@@ -375,6 +375,78 @@ static void DrawBob32_2bpl(UBYTE* screen_mem,
     }
 }
 
+static void DrawSplash32(UBYTE* screen_mem, const UWORD* mask, const UWORD* dataHi, const UWORD* dataLo,
+                         short x, short y, UBYTE planeHi, UBYTE planeLo, UWORD rows) {
+    if (x <= -32 || x >= SCREEN_W || y <= -(short)rows || y >= SCREEN_H) return;
+    if (y < HUD_H) {
+        UWORD skip = (UWORD)(HUD_H - y);
+        mask += skip * 2;
+        dataHi += skip * 2;
+        dataLo += skip * 2;
+        rows = (rows > skip) ? rows - skip : 0;
+        y = HUD_H;
+    }
+    if (y + (short)rows > SCREEN_H) rows = (UWORD)(SCREEN_H - y);
+    if (rows == 0) return;
+
+    UWORD wx = (UWORD)(x < 0 ? 0 : x) >> 4;
+    UWORD shift = (UWORD)(x & 15);
+    UWORD rowWords = ROW_BYTES / 2;
+    for (UWORD row = 0; row < rows; row++) {
+        UWORD m0 = mask[row*2],   m1 = mask[row*2+1];
+        UWORD h0 = dataHi[row*2], h1 = dataHi[row*2+1];
+        UWORD l0 = dataLo[row*2], l1 = dataLo[row*2+1];
+        
+        UWORD mv0 = m0 >> shift;
+        UWORD mv1 = shift ? (UWORD)((m0 << (16-shift)) | (m1 >> shift)) : m1;
+        UWORD mv2 = shift ? (UWORD)(m1 << (16-shift)) : 0;
+        
+        UWORD hv0 = h0 >> shift;
+        UWORD hv1 = shift ? (UWORD)((h0 << (16-shift)) | (h1 >> shift)) : h1;
+        UWORD hv2 = shift ? (UWORD)(h1 << (16-shift)) : 0;
+        
+        UWORD lv0 = l0 >> shift;
+        UWORD lv1 = shift ? (UWORD)((l0 << (16-shift)) | (l1 >> shift)) : l1;
+        UWORD lv2 = shift ? (UWORD)(l1 << (16-shift)) : 0;
+        
+        UWORD ry   = (UWORD)y + row;
+        UWORD base = ry * rowWords + wx;
+        
+        // Write planeHi (BPL2)
+        UWORD* phi = (UWORD*)(screen_mem + planeHi * PLANE_BYTES);
+        if (base < rowWords * SCREEN_H) {
+            phi[base] = (UWORD)((phi[base] & ~mv0) | (hv0 & mv0));
+        }
+        if (wx + 1 < rowWords) {
+            phi[base+1] = (UWORD)((phi[base+1] & ~mv1) | (hv1 & mv1));
+        }
+        if (wx + 2 < rowWords) {
+            phi[base+2] = (UWORD)((phi[base+2] & ~mv2) | (hv2 & mv2));
+        }
+        
+        // Write planeLo (BPL4/BPL6)
+        UWORD* plo = (UWORD*)(screen_mem + planeLo * PLANE_BYTES);
+        if (base < rowWords * SCREEN_H) {
+            plo[base] = (UWORD)((plo[base] & ~mv0) | (lv0 & mv0));
+        }
+        if (wx + 1 < rowWords) {
+            plo[base+1] = (UWORD)((plo[base+1] & ~mv1) | (lv1 & mv1));
+        }
+        if (wx + 2 < rowWords) {
+            plo[base+2] = (UWORD)((plo[base+2] & ~mv2) | (lv2 & mv2));
+        }
+        
+        // Clear third plane
+        {
+            UBYTE pl3rd = (UBYTE)(1 + 3 + 5 - planeHi - planeLo);
+            UWORD* p3rd = (UWORD*)(screen_mem + pl3rd * PLANE_BYTES);
+            if (base < rowWords * SCREEN_H) p3rd[base] &= ~mv0;
+            if (wx + 1 < rowWords) p3rd[base+1] &= ~mv1;
+            if (wx + 2 < rowWords) p3rd[base+2] &= ~mv2;
+        }
+    }
+}
+
 static void DrawBob48_2bpl(UBYTE* screen_mem,
                            const UWORD* mask, const UWORD* dataHi, const UWORD* dataLo,
                            short x, short y, UBYTE planeHi, UBYTE planeLo) {
@@ -1179,6 +1251,44 @@ static void EnemyFire(void) {
 
 void SpawnExplosion(int x, int y, int kind);
 
+static void CollideLaserShip(void) {
+    if (g_ShipExploding) return;
+
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        TEnemy* e = &g_Enemies[i];
+        if (!e->active || e->health <= 0 || e->type != ENEMY_TYPE_BIG) continue;
+
+        // Laser horizontal span: [e->x + 16, e->x + 16 + 15] (16 pixels wide)
+        short lx0 = e->x + 16;
+        short lx1 = lx0 + 15;
+        // Laser top starts at bottom of enemy
+        short ly0 = e->y + ENEMY_H_BIG;
+
+        // Ship hitbox boundaries (using hit offset)
+        short sx0 = g_ShipX + SHIP_HIT_OX;
+        short sx1 = sx0 + SHIP_HIT_W - 1;
+        short sy0 = g_ShipY + SHIP_HIT_OY;
+        short sy1 = sy0 + SHIP_HIT_H - 1;
+
+        // Check horizontal overlap and vertical range (ship must be below laser start)
+        if (lx1 >= sx0 && lx0 <= sx1 && sy1 >= ly0) {
+            // Collision!
+            if (e->variant == g_ShipPolarity) {
+                // Same polarity: knockback downwards
+                g_ShipY += 3;
+                if (g_ShipY > SHIP_MAX_Y) g_ShipY = SHIP_MAX_Y;
+            } else {
+                // Opposite polarity: Ship explodes!
+                SpawnExplosion(g_ShipX, g_ShipY, 1); // EXP_KIND_SHIP = 1
+                g_ShipExploding = 1;
+                g_ShipExplTimer = 12; // SHIP_EXPL_TIMER
+                g_Lives--;
+                break;
+            }
+        }
+    }
+}
+
 static void CollideShotsEnemies(void) {
     for (int e_idx = 0; e_idx < MAX_ENEMIES; e_idx++) {
         TEnemy* e = &g_Enemies[e_idx];
@@ -1897,21 +2007,73 @@ static void RenderFrame(UBYTE* screen_mem) {
                                            e->x, e->y, 1, 3);
                         }
                         // Draw the laser beam below the enemy using blitter BOB
-                        // The blitter reuses the same 1-word row for all scanlines (BLTAMOD=-2)
                         short laser_x = e->x + 16; // center of 48px enemy, left-align 16px laser
                         short laser_y = e->y + ENEMY_H_BIG; // start just below the enemy
                         // Clamp to game area — 1-element arrays cannot survive pointer advance in the HUD clipping path
                         if (laser_y < HUD_H) laser_y = HUD_H;
                         short laser_rows = SCREEN_H - laser_y;
+
+                        // Same polarity laser cuts on the ship's forcefield (if ship is alive and in horizontal range)
+                        short is_cut = 0;
+                        short cut_y = SCREEN_H;
+                        if (e->variant == g_ShipPolarity && !g_ShipExploding) {
+                            short lx0 = laser_x;
+                            short lx1 = lx0 + 15;
+                            short sx0 = g_ShipX + SHIP_HIT_OX;
+                            short sx1 = sx0 + SHIP_HIT_W - 1;
+                            if (lx1 >= sx0 && lx0 <= sx1 && g_ShipY >= laser_y - 12) {
+                                // Calculate horizontal offset from laser center (laser_x + 8) to ship center (g_ShipX + 9)
+                                short dx = (short)((laser_x + 8) - (g_ShipX + 9));
+                                short abs_dx = (dx < 0) ? -dx : dx;
+                                if (abs_dx > 15) abs_dx = 15;
+                                
+                                // R = 14 circular dome Y offset lookup table
+                                static const signed char dome_y_table[16] = {
+                                    0, 0, 0, 0, 1, 1, 1, 2, 3, 3, 4, 5, 7, 9, 11, 14
+                                };
+                                
+                                // Dome top is at g_ShipY - 2 at the center, curving down on the sides
+                                cut_y = (short)(g_ShipY - 2 + dome_y_table[abs_dx]);
+                                if (cut_y < laser_y) cut_y = laser_y;
+                                laser_rows = cut_y - laser_y;
+                                is_cut = 1;
+                            }
+                        }
+
                         if (laser_y < SCREEN_H && laser_rows > 0) {
+                            int scroll = (g_FrameCounter * 4) % 16; // Fast tape/conveyor scrolling speed
                             if (e->variant == 0) {
                                 // Polarity A: body=white(BPL2=1), accent=blue(BPL6=5)
-                                DrawBob16_2bpl(screen_mem, g_LaserMask, g_LaserBodyA, g_LaserAccentA,
+                                DrawBob16_2bpl(screen_mem, g_LaserMask + scroll, g_LaserBodyA + scroll, g_LaserAccentA + scroll,
                                                laser_x, laser_y, 1, 5, (UWORD)laser_rows);
                             } else {
                                 // Polarity B: body=dark(BPL2=1), accent=red(BPL4=3)
-                                DrawBob16_2bpl(screen_mem, g_LaserMask, g_LaserBodyB, g_LaserAccentB,
+                                DrawBob16_2bpl(screen_mem, g_LaserMask + scroll, g_LaserBodyB + scroll, g_LaserAccentB + scroll,
                                                laser_x, laser_y, 1, 3, (UWORD)laser_rows);
+                            }
+                        }
+
+                        // Draw continuous animated splash if the laser is cut by the forcefield
+                        if (is_cut && laser_rows >= 0) {
+                            // Jitter effect to simulate crackling energy sparks
+                            short jitter_x = (g_FrameCounter & 1) ? 1 : -1;
+                            short jitter_y = ((g_FrameCounter >> 1) & 1) ? 1 : 0;
+                            short splash_x = laser_x - 8 + jitter_x;  // Center the 32px wide splash on the 16px wide laser + jitter
+                            
+                            // Align the center of the crescent (Row 4) with the contact point (cut_y)
+                            short splash_y = (short)(cut_y - 4 + jitter_y);
+                            if (splash_y >= HUD_H) {
+                                int f = (g_FrameCounter >> 1) & 1; // Speed up animation: alternate every 2 ticks
+                                const UWORD* s_mask   = f ? g_LaserSplash1_Mask   : g_LaserSplash0_Mask;
+                                const UWORD* s_body   = f ? g_LaserSplash1_Body   : g_LaserSplash0_Body;
+                                const UWORD* s_accent = f ? g_LaserSplash1_Accent : g_LaserSplash0_Accent;
+                                if (e->variant == 0) {
+                                    DrawSplash32(screen_mem, s_mask, s_body, s_accent,
+                                                 splash_x, splash_y, 1, 5, 12);
+                                } else {
+                                    DrawSplash32(screen_mem, s_mask, s_body, s_accent,
+                                                 splash_x, splash_y, 1, 3, 12);
+                                }
                             }
                         }
                     }
@@ -2333,6 +2495,7 @@ int main() {
 
             // Enemy shot vs ship / dome interaction (68k ASM)
             AsmCollideEnemyShotsShip();
+            CollideLaserShip();
 
             // --- Enemy firing (C-based aimed shots) ---
             EnemyFire();

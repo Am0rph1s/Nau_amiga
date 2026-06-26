@@ -80,18 +80,69 @@ static const UWORD* const g_ExpData[4]  = { g_Exp0Data, g_Exp1Data, g_Exp2Data, 
 // 256 rows ensures the C fallback (if ASM fails) never reads out-of-bounds.
 // All rows are identical; blitter BLTAMOD=-2 re-reads the same word anyway.
 // Call InitLaserGfx() once at startup to fill the arrays.
-static CHIP_RAM_DATA UWORD g_LaserMask[256];
-static CHIP_RAM_DATA UWORD g_LaserBodyA[256];
-static CHIP_RAM_DATA UWORD g_LaserAccentA[256];
-static CHIP_RAM_DATA UWORD g_LaserBodyB[256];
-static CHIP_RAM_DATA UWORD g_LaserAccentB[256];
+static CHIP_RAM_DATA UWORD g_LaserMask[320];
+static CHIP_RAM_DATA UWORD g_LaserBodyA[320];
+static CHIP_RAM_DATA UWORD g_LaserAccentA[320];
+static CHIP_RAM_DATA UWORD g_LaserBodyB[320];
+static CHIP_RAM_DATA UWORD g_LaserAccentB[320];
 
 static void InitLaserGfx(void) {
-    for (int r = 0; r < 256; r++) {
-        g_LaserMask[r]    = 0x3FFC; // 14-pixel-wide mask
-        g_LaserBodyA[r]   = 0x0FF0; // 12px bright core  (white)
-        g_LaserAccentA[r] = 0x3FFC; // 14px outer glow   (blue)
-        g_LaserBodyB[r]   = 0x0FF0; // 12px core         (black/dark)
-        g_LaserAccentB[r] = 0x3FFC; // 14px outer glow   (red)
+    static const signed char sin_table[16] = {
+        0, 1, 2, 3, 3, 2, 1, 0, -1, -2, -3, -3, -2, -1, 0, 0
+    };
+    for (int r = 0; r < 320; r++) {
+        int idx1 = r % 16;
+        int idx2 = (r + 8) % 16;
+        
+        int shift1 = sin_table[idx1];
+        int shift2 = sin_table[idx2];
+        
+        // Base strand shape: 0x03F0 (6 pixels wide: bits 4 to 9)
+        UWORD strand1 = 0x03F0;
+        if (shift1 > 0) strand1 >>= shift1;
+        else if (shift1 < 0) strand1 <<= -shift1;
+        
+        UWORD strand2 = 0x03F0;
+        if (shift2 > 0) strand2 >>= shift2;
+        else if (shift2 < 0) strand2 <<= -shift2;
+        
+        g_LaserMask[r] = strand1 | strand2;
+        g_LaserBodyA[r]   = strand1;
+        g_LaserAccentA[r] = strand2;
+        g_LaserBodyB[r]   = strand1;
+        g_LaserAccentB[r] = strand2;
     }
 }
+
+// Same-polarity laser collision splash animations (32x12, 2 frames)
+static CHIP_RAM_DATA UWORD g_LaserSplash0_Mask[24] = {
+    0x0000,0x0000, 0x0018,0x1800, 0x007E,0x7E00, 0x01E7,0xE780,
+    0x07C3,0xC3E0, 0x1F00,0x00F8, 0x7C00,0x003E, 0xF000,0x000F,
+    0xC000,0x0003, 0x8000,0x0001, 0x0000,0x0000, 0x0000,0x0000
+};
+static CHIP_RAM_DATA UWORD g_LaserSplash0_Body[24] = {
+    0x0000,0x0000, 0x0000,0x0000, 0x0018,0x1800, 0x0066,0x6600,
+    0x0180,0x0180, 0x0000,0x0000, 0x0000,0x0000, 0x0000,0x0000,
+    0x0000,0x0000, 0x0000,0x0000, 0x0000,0x0000, 0x0000,0x0000
+};
+static CHIP_RAM_DATA UWORD g_LaserSplash0_Accent[24] = {
+    0x0000,0x0000, 0x0018,0x1800, 0x007E,0x7E00, 0x01E7,0xE780,
+    0x07C3,0xC3E0, 0x1F00,0x00F8, 0x7C00,0x003E, 0xF000,0x000F,
+    0xC000,0x0003, 0x8000,0x0001, 0x0000,0x0000, 0x0000,0x0000
+};
+
+static CHIP_RAM_DATA UWORD g_LaserSplash1_Mask[24] = {
+    0x0000,0x0000, 0x0000,0x0000, 0x003C,0x3C00, 0x01C3,0xC380,
+    0x0780,0x01E0, 0x1E00,0x0078, 0x3C00,0x003C, 0xF000,0x000F,
+    0x8000,0x0001, 0x0000,0x0000, 0x0000,0x0000, 0x0000,0x0000
+};
+static CHIP_RAM_DATA UWORD g_LaserSplash1_Body[24] = {
+    0x0000,0x0000, 0x0000,0x0000, 0x0000,0x0000, 0x0081,0x8100,
+    0x0180,0x0180, 0x0000,0x0000, 0x0000,0x0000, 0x0000,0x0000,
+    0x0000,0x0000, 0x0000,0x0000, 0x0000,0x0000, 0x0000,0x0000
+};
+static CHIP_RAM_DATA UWORD g_LaserSplash1_Accent[24] = {
+    0x0000,0x0000, 0x0000,0x0000, 0x003C,0x3C00, 0x01C3,0xC380,
+    0x0780,0x01E0, 0x1E00,0x0078, 0x3C00,0x003C, 0xF000,0x000F,
+    0x8000,0x0001, 0x0000,0x0000, 0x0000,0x0000, 0x0000,0x0000
+};
