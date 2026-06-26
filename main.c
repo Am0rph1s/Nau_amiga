@@ -946,6 +946,7 @@ static short      g_ForceFieldSweepDir   = 0;   // 0=white->black (wiper L->R), 
 // Enemies
 __attribute__((externally_visible)) TEnemy     g_Enemies[MAX_ENEMIES];
 __attribute__((externally_visible)) TEnemyShot g_EnemyShots[MAX_ENEMY_SHOTS];
+static short      g_EnemyShotTimer[MAX_ENEMY_SHOTS];
 __attribute__((externally_visible)) TExplosion g_Explosions[MAX_EXPLOSIONS];
 
 // Absorption chain: counts absorbed shots of the same polarity. Capped at
@@ -1074,7 +1075,10 @@ static void ResetGameSession() {
     g_NextLifeAt = EXTRA_LIFE_EVERY;
     g_BGScrollY     = BG_MAP_ROWS * BG_TILE_H - SCREEN_H;
     for (int i = 0; i < MAX_ENEMIES;    i++) g_Enemies[i].active    = 0;
-    for (int i = 0; i < MAX_ENEMY_SHOTS;i++) g_EnemyShots[i].active = 0;
+    for (int i = 0; i < MAX_ENEMY_SHOTS;i++) {
+        g_EnemyShots[i].active = 0;
+        g_EnemyShotTimer[i] = 0;
+    }
     for (int i = 0; i < MAX_EXPLOSIONS; i++) g_Explosions[i].active = 0;
     g_AbsorbCount = 0;
     g_WaveActive  = 0;
@@ -1124,25 +1128,30 @@ static void UpdateEnemies(void) {
         if (!e->active) continue;
 
         if (e->type == ENEMY_TYPE_FAST) {
-            if (e->variant == 0) { // Fast A (Left side)
-                if (e->vy > 0 && e->y >= 144) {
-                    // Turn right
-                    e->vy = 0;
-                    e->vx = 3;
-                } else if (e->vx > 0 && e->x >= 148) {
-                    // Turn up
-                    e->vx = 0;
-                    e->vy = -3;
-                }
-            } else { // Fast B (Right side)
-                if (e->vy > 0 && e->y >= 144) {
-                    // Turn left
-                    e->vy = 0;
-                    e->vx = -3;
-                } else if (e->vx < 0 && e->x <= 156) {
-                    // Turn up
-                    e->vx = 0;
-                    e->vy = -3;
+            if (g_Level == 1) {
+                e->vx = 0;
+                e->vy = ENEMY_SPEED_FAST;
+            } else {
+                if (e->variant == 0) { // Fast A (Left side)
+                    if (e->vy > 0 && e->y >= 144) {
+                        // Turn right
+                        e->vy = 0;
+                        e->vx = 3;
+                    } else if (e->vx > 0 && e->x >= 148) {
+                        // Turn up
+                        e->vx = 0;
+                        e->vy = -3;
+                    }
+                } else { // Fast B (Right side)
+                    if (e->vy > 0 && e->y >= 144) {
+                        // Turn left
+                        e->vy = 0;
+                        e->vx = -3;
+                    } else if (e->vx < 0 && e->x <= 156) {
+                        // Turn up
+                        e->vx = 0;
+                        e->vy = -3;
+                    }
                 }
             }
         } else if (e->type == ENEMY_TYPE_BIG) {
@@ -1153,16 +1162,13 @@ static void UpdateEnemies(void) {
                 if (e->y >= 64) {
                     e->zig_timer = 1; // Switch to patrol phase
                     e->vy = 0;
-                    e->vx = (e->variant == 0) ? 2 : -2;
+                    e->vx = 0; // Stays static
+                    e->fire_cd = 10; // Fire quickly after arrival!
                 }
             } else {
-                // Patrol phase
+                // Patrol phase (stay static)
                 e->vy = 0;
-                if (e->vx > 0 && e->x >= SCREEN_W - 48 - 16) { // 256
-                    e->vx = -2;
-                } else if (e->vx < 0 && e->x <= 16) {
-                    e->vx = 2;
-                }
+                e->vx = 0;
             }
         } else {
             e->vx = 0;
@@ -1194,12 +1200,34 @@ static void UpdateEnemyShots(void) {
         TEnemyShot* s = &g_EnemyShots[i];
         if (!s->active) continue;
 
+        if (g_EnemyShotTimer[i] > 0) {
+            g_EnemyShotTimer[i]++;
+            if (g_EnemyShotTimer[i] == 26) {
+                // Lock on ship and launch at high speed (speed 12)
+                short targetX = g_ShipX + 9;
+                short targetY = g_ShipY + 12;
+                short dx = targetX - s->x;
+                short dy = targetY - s->y;
+                short abs_dx = (dx < 0) ? -dx : dx;
+                short abs_dy = (dy < 0) ? -dy : dy;
+                short dist = abs_dx + abs_dy;
+                if (dist > 0) {
+                    s->vx = (short)((dx * 12) / dist);
+                    s->vy = (short)((dy * 12) / dist);
+                } else {
+                    s->vx = 0;
+                    s->vy = 12;
+                }
+            }
+        }
+
         s->x += s->vx;
         s->y += s->vy;
 
         // Clip/Deactivate if off screen (left, right, bottom, top)
         if (s->y >= SCREEN_H || s->y < -16 || s->x < -16 || s->x >= SCREEN_W) {
             s->active = 0;
+            g_EnemyShotTimer[i] = 0;
         }
     }
 }
@@ -1208,6 +1236,35 @@ static void EnemyFire(void) {
     for (int i = 0; i < MAX_ENEMIES; i++) {
         TEnemy* e = &g_Enemies[i];
         if (!e->active || e->health <= 0) continue;
+
+        if (e->type == ENEMY_TYPE_BIG) {
+            // Big enemy: fires homing salvo if in patrol phase (static)
+            if (e->zig_timer != 0) {
+                if (e->fire_cd > 0) {
+                    e->fire_cd--;
+                } else {
+                    short velocities_x[5] = { -2, -1, 0, 1, 2 };
+                    short velocities_y[5] = { -2, -3, -3, -3, -2 };
+                    
+                    int shot_count = 0;
+                    for (int s = 0; s < MAX_ENEMY_SHOTS && shot_count < 5; s++) {
+                        if (!g_EnemyShots[s].active) {
+                            TEnemyShot* es = &g_EnemyShots[s];
+                            es->active = 1;
+                            es->x = e->x + 24 - 8; // center of 48px enemy minus half bullet width (16/2 = 8)
+                            es->y = e->y - 8; // Spawn at the upper band of the enemy!
+                            es->vx = velocities_x[shot_count];
+                            es->vy = velocities_y[shot_count];
+                            es->variant = e->variant; // matching polarity
+                            g_EnemyShotTimer[s] = 1; // start homing timer!
+                            shot_count++;
+                        }
+                    }
+                    e->fire_cd = 120; // reset cooldown to 120 frames
+                }
+            }
+            continue;
+        }
 
         // Burst firing: cycle of 64 frames (~1.3s), active window of 16 frames, fire every 8 frames
         short cycle_time = (short)((g_FrameCounter + i * 17) % 64);
@@ -1256,7 +1313,7 @@ static void CollideLaserShip(void) {
 
     for (int i = 0; i < MAX_ENEMIES; i++) {
         TEnemy* e = &g_Enemies[i];
-        if (!e->active || e->health <= 0 || e->type != ENEMY_TYPE_BIG) continue;
+        if (!e->active || e->health <= 0 || e->type != ENEMY_TYPE_BIG || e->zig_timer == 0) continue;
 
         // Laser horizontal span: [e->x + 16, e->x + 16 + 15] (16 pixels wide)
         short lx0 = e->x + 16;
@@ -2006,73 +2063,75 @@ static void RenderFrame(UBYTE* screen_mem) {
                                            g_EnemyLaser48InvHi, g_EnemyLaser48InvLo,
                                            e->x, e->y, 1, 3);
                         }
-                        // Draw the laser beam below the enemy using blitter BOB
-                        short laser_x = e->x + 16; // center of 48px enemy, left-align 16px laser
-                        short laser_y = e->y + ENEMY_H_BIG; // start just below the enemy
-                        // Clamp to game area — 1-element arrays cannot survive pointer advance in the HUD clipping path
-                        if (laser_y < HUD_H) laser_y = HUD_H;
-                        short laser_rows = SCREEN_H - laser_y;
-
-                        // Same polarity laser cuts on the ship's forcefield (if ship is alive and in horizontal range)
-                        short is_cut = 0;
-                        short cut_y = SCREEN_H;
-                        if (e->variant == g_ShipPolarity && !g_ShipExploding) {
-                            short lx0 = laser_x;
-                            short lx1 = lx0 + 15;
-                            short sx0 = g_ShipX + SHIP_HIT_OX;
-                            short sx1 = sx0 + SHIP_HIT_W - 1;
-                            if (lx1 >= sx0 && lx0 <= sx1 && g_ShipY >= laser_y - 12) {
-                                // Calculate horizontal offset from laser center (laser_x + 8) to ship center (g_ShipX + 9)
-                                short dx = (short)((laser_x + 8) - (g_ShipX + 9));
-                                short abs_dx = (dx < 0) ? -dx : dx;
-                                if (abs_dx > 15) abs_dx = 15;
-                                
-                                // R = 14 circular dome Y offset lookup table
-                                static const signed char dome_y_table[16] = {
-                                    0, 0, 0, 0, 1, 1, 1, 2, 3, 3, 4, 5, 7, 9, 11, 14
-                                };
-                                
-                                // Dome top is at g_ShipY - 2 at the center, curving down on the sides
-                                cut_y = (short)(g_ShipY - 2 + dome_y_table[abs_dx]);
-                                if (cut_y < laser_y) cut_y = laser_y;
-                                laser_rows = cut_y - laser_y;
-                                is_cut = 1;
+                        // Draw the laser beam below the enemy using blitter BOB if in patrol phase (e->zig_timer != 0)
+                        if (e->zig_timer != 0) {
+                            short laser_x = e->x + 16; // center of 48px enemy, left-align 16px laser
+                            short laser_y = e->y + ENEMY_H_BIG; // start just below the enemy
+                            // Clamp to game area — 1-element arrays cannot survive pointer advance in the HUD clipping path
+                            if (laser_y < HUD_H) laser_y = HUD_H;
+                            short laser_rows = SCREEN_H - laser_y;
+    
+                            // Same polarity laser cuts on the ship's forcefield (if ship is alive and in horizontal range)
+                            short is_cut = 0;
+                            short cut_y = SCREEN_H;
+                            if (e->variant == g_ShipPolarity && !g_ShipExploding) {
+                                short lx0 = laser_x;
+                                short lx1 = lx0 + 15;
+                                short sx0 = g_ShipX + SHIP_HIT_OX;
+                                short sx1 = sx0 + SHIP_HIT_W - 1;
+                                if (lx1 >= sx0 && lx0 <= sx1 && g_ShipY >= laser_y - 12) {
+                                    // Calculate horizontal offset from laser center (laser_x + 8) to ship center (g_ShipX + 9)
+                                    short dx = (short)((laser_x + 8) - (g_ShipX + 9));
+                                    short abs_dx = (dx < 0) ? -dx : dx;
+                                    if (abs_dx > 15) abs_dx = 15;
+                                    
+                                    // R = 14 circular dome Y offset lookup table
+                                    static const signed char dome_y_table[16] = {
+                                        0, 0, 0, 0, 1, 1, 1, 2, 3, 3, 4, 5, 7, 9, 11, 14
+                                    };
+                                    
+                                    // Dome top is at g_ShipY - 2 at the center, curving down on the sides
+                                    cut_y = (short)(g_ShipY - 2 + dome_y_table[abs_dx]);
+                                    if (cut_y < laser_y) cut_y = laser_y;
+                                    laser_rows = cut_y - laser_y;
+                                    is_cut = 1;
+                                }
                             }
-                        }
-
-                        if (laser_y < SCREEN_H && laser_rows > 0) {
-                            int scroll = (g_FrameCounter * 4) % 16; // Fast tape/conveyor scrolling speed
-                            if (e->variant == 0) {
-                                // Polarity A: body=white(BPL2=1), accent=blue(BPL6=5)
-                                DrawBob16_2bpl(screen_mem, g_LaserMask + scroll, g_LaserBodyA + scroll, g_LaserAccentA + scroll,
-                                               laser_x, laser_y, 1, 5, (UWORD)laser_rows);
-                            } else {
-                                // Polarity B: body=dark(BPL2=1), accent=red(BPL4=3)
-                                DrawBob16_2bpl(screen_mem, g_LaserMask + scroll, g_LaserBodyB + scroll, g_LaserAccentB + scroll,
-                                               laser_x, laser_y, 1, 3, (UWORD)laser_rows);
-                            }
-                        }
-
-                        // Draw continuous animated splash if the laser is cut by the forcefield
-                        if (is_cut && laser_rows >= 0) {
-                            // Jitter effect to simulate crackling energy sparks
-                            short jitter_x = (g_FrameCounter & 1) ? 1 : -1;
-                            short jitter_y = ((g_FrameCounter >> 1) & 1) ? 1 : 0;
-                            short splash_x = laser_x - 8 + jitter_x;  // Center the 32px wide splash on the 16px wide laser + jitter
-                            
-                            // Align the center of the crescent (Row 4) with the contact point (cut_y)
-                            short splash_y = (short)(cut_y - 4 + jitter_y);
-                            if (splash_y >= HUD_H) {
-                                int f = (g_FrameCounter >> 1) & 1; // Speed up animation: alternate every 2 ticks
-                                const UWORD* s_mask   = f ? g_LaserSplash1_Mask   : g_LaserSplash0_Mask;
-                                const UWORD* s_body   = f ? g_LaserSplash1_Body   : g_LaserSplash0_Body;
-                                const UWORD* s_accent = f ? g_LaserSplash1_Accent : g_LaserSplash0_Accent;
+    
+                            if (laser_y < SCREEN_H && laser_rows > 0) {
+                                int scroll = (g_FrameCounter * 4) % 16; // Fast tape/conveyor scrolling speed
                                 if (e->variant == 0) {
-                                    DrawSplash32(screen_mem, s_mask, s_body, s_accent,
-                                                 splash_x, splash_y, 1, 5, 12);
+                                    // Polarity A: body=white(BPL2=1), accent=blue(BPL6=5)
+                                    DrawBob16_2bpl(screen_mem, g_LaserMask + scroll, g_LaserBodyA + scroll, g_LaserAccentA + scroll,
+                                                   laser_x, laser_y, 1, 5, (UWORD)laser_rows);
                                 } else {
-                                    DrawSplash32(screen_mem, s_mask, s_body, s_accent,
-                                                 splash_x, splash_y, 1, 3, 12);
+                                    // Polarity B: body=dark(BPL2=1), accent=red(BPL4=3)
+                                    DrawBob16_2bpl(screen_mem, g_LaserMask + scroll, g_LaserBodyB + scroll, g_LaserAccentB + scroll,
+                                                   laser_x, laser_y, 1, 3, (UWORD)laser_rows);
+                                }
+                            }
+    
+                            // Draw continuous animated splash if the laser is cut by the forcefield
+                            if (is_cut && laser_rows >= 0) {
+                                // Jitter effect to simulate crackling energy sparks
+                                short jitter_x = (g_FrameCounter & 1) ? 1 : -1;
+                                short jitter_y = ((g_FrameCounter >> 1) & 1) ? 1 : 0;
+                                short splash_x = laser_x - 8 + jitter_x;  // Center the 32px wide splash on the 16px wide laser + jitter
+                                
+                                // Align the center of the crescent (Row 4) with the contact point (cut_y)
+                                short splash_y = (short)(cut_y - 4 + jitter_y);
+                                if (splash_y >= HUD_H) {
+                                    int f = (g_FrameCounter >> 1) & 1; // Speed up animation: alternate every 2 ticks
+                                    const UWORD* s_mask   = f ? g_LaserSplash1_Mask   : g_LaserSplash0_Mask;
+                                    const UWORD* s_body   = f ? g_LaserSplash1_Body   : g_LaserSplash0_Body;
+                                    const UWORD* s_accent = f ? g_LaserSplash1_Accent : g_LaserSplash0_Accent;
+                                    if (e->variant == 0) {
+                                        DrawSplash32(screen_mem, s_mask, s_body, s_accent,
+                                                     splash_x, splash_y, 1, 5, 12);
+                                    } else {
+                                        DrawSplash32(screen_mem, s_mask, s_body, s_accent,
+                                                     splash_x, splash_y, 1, 3, 12);
+                                    }
                                 }
                             }
                         }
@@ -2112,16 +2171,62 @@ static void RenderFrame(UBYTE* screen_mem) {
             if (g_EnemyShots[i].y < HUD_H) continue; // Skip drawing enemy shots in HUD area
             
             // Flickering: draw only on alternate frames based on index to halve Blitter CPU/DMA load
-            if (((i + g_FrameCounter) & 1) == 0) continue;
+            // Skip flickering for homing bullets to keep their visual trail smooth and solid.
+            if (g_EnemyShotTimer[i] == 0) {
+                if (((i + g_FrameCounter) & 1) == 0) continue;
+            }
 
             if (g_EnemyShots[i].variant == 0) {
-                DrawBob16_2bpl(screen_mem, g_EShotW_Mask, g_EShotW_DataHi, g_EShotW_DataLo,
-                               g_EnemyShots[i].x, g_EnemyShots[i].y, 1, 5, 4);
+                if (g_EnemyShotTimer[i] > 0) {
+                    const UWORD* mask = g_HomingShotDn_Mask;
+                    const UWORD* body = g_HomingShotDn_Body;
+                    const UWORD* accent = g_HomingShotDn_Accent;
+                    if (g_EnemyShots[i].vy < 0) {
+                        mask = g_HomingShotUp_Mask;
+                        body = g_HomingShotUp_Body;
+                        accent = g_HomingShotUp_Accent;
+                    } else if (g_EnemyShots[i].vx < 0) {
+                        mask = g_HomingShotDL_Mask;
+                        body = g_HomingShotDL_Body;
+                        accent = g_HomingShotDL_Accent;
+                    } else if (g_EnemyShots[i].vx > 0) {
+                        mask = g_HomingShotDR_Mask;
+                        body = g_HomingShotDR_Body;
+                        accent = g_HomingShotDR_Accent;
+                    }
+                    // Polarity A: Ball = Blue (BPL6 = 5), Trail = White (BPL2 = 1)
+                    // BPL2 gets accent (trail), BPL6 gets body (ball)
+                    DrawBob16_2bpl(screen_mem, mask, accent, body,
+                                   g_EnemyShots[i].x, g_EnemyShots[i].y, 1, 5, 16);
+                } else {
+                    DrawBob16_2bpl(screen_mem, g_EShotW_Mask, g_EShotW_DataHi, g_EShotW_DataLo,
+                                   g_EnemyShots[i].x, g_EnemyShots[i].y, 1, 5, 4);
+                }
             } else {
-                DrawBob16_2bpl(screen_mem, g_EShotB_Mask, g_EShotB_DataHi, g_EShotB_DataLo,
-                               g_EnemyShots[i].x, g_EnemyShots[i].y, 3, 1, 4);
-                OrBPL4(screen_mem, g_EShotB_DataLo,
-                       g_EnemyShots[i].x, g_EnemyShots[i].y, 4);
+                if (g_EnemyShotTimer[i] > 0) {
+                    const UWORD* mask = g_HomingShotDn_Mask;
+                    const UWORD* body = g_HomingShotDn_Body;
+                    if (g_EnemyShots[i].vy < 0) {
+                        mask = g_HomingShotUp_Mask;
+                        body = g_HomingShotUp_Body;
+                    } else if (g_EnemyShots[i].vx < 0) {
+                        mask = g_HomingShotDL_Mask;
+                        body = g_HomingShotDL_Body;
+                    } else if (g_EnemyShots[i].vx > 0) {
+                        mask = g_HomingShotDR_Mask;
+                        body = g_HomingShotDR_Body;
+                    }
+                    // Polarity B: Ball = Red (BPL4=1, BPL2=1), Trail = Black (BPL4=1, BPL2=0)
+                    // BPL2 (plane 1) gets body (ball)
+                    // BPL4 (plane 3) gets mask (ball + trail)
+                    DrawBob16_2bpl(screen_mem, mask, body, mask,
+                                   g_EnemyShots[i].x, g_EnemyShots[i].y, 1, 3, 16);
+                } else {
+                    DrawBob16_2bpl(screen_mem, g_EShotB_Mask, g_EShotB_DataHi, g_EShotB_DataLo,
+                                   g_EnemyShots[i].x, g_EnemyShots[i].y, 3, 1, 4);
+                    OrBPL4(screen_mem, g_EShotB_DataLo,
+                           g_EnemyShots[i].x, g_EnemyShots[i].y, 4);
+                }
             }
         }
         for (int i = 0; i < MAX_EXPLOSIONS; i++) {
@@ -2448,34 +2553,67 @@ int main() {
                 }
             } else {
                 const TLevelConfig* cfg = &g_Levels[g_Level - 1];
-                if (g_WaveSpawned < g_WaveTotal) {
+                if (g_Level == 1) {
                     g_SpawnTimer--;
                     if (g_SpawnTimer <= 0) {
-                        short type = PickEnemyType(cfg->mask);
-                        SpawnEnemy(type);
-                        g_WaveSpawned++;
-                        if (g_Level == 1) {
-                            if (g_WaveSpawned == 8) {
-                                g_SpawnTimer = 60; // Delay before the second fast stream (80 frames)
-                            } else if (g_WaveSpawned == 16) {
-                                g_SpawnTimer = 100; // 100 frames pause before first big enemy
-                            } else if (g_WaveSpawned == 17) {
-                                g_SpawnTimer = 150; // 150 frames pause before second big enemy
-                            } else {
-                                g_SpawnTimer = SERIAL_DELAY;
-                            }
-                        } else {
-                            g_SpawnTimer = SERIAL_DELAY;
+                        g_SpawnTimer = 120; // Spawn new batch every 120 frames
+                        
+                        // Spawn 1 Big Enemy
+                        short idx_big = FindFreeEnemy();
+                        if (idx_big >= 0) {
+                            TEnemy* e = &g_Enemies[idx_big];
+                            e->active = 1;
+                            e->type = ENEMY_TYPE_BIG;
+                            e->health = 40;
+                            e->y = -48;
+                            e->vy = 2;
+                            e->vx = 0;
+                            e->zig_timer = 0;
+                            e->pattern = PATT_STRAIGHT;
+                            static short big_seq = 0;
+                            e->variant = big_seq % 2;
+                            e->x = 112; // Static center position
+                            big_seq++;
                         }
+                        
+                        /*
+                        // Spawn 1 Fast Enemy
+                        short idx_fast = FindFreeEnemy();
+                        if (idx_fast >= 0) {
+                            TEnemy* e = &g_Enemies[idx_fast];
+                            e->active = 1;
+                            e->type = ENEMY_TYPE_FAST;
+                            e->health = 4;
+                            e->y = -16;
+                            e->vy = ENEMY_SPEED_FAST;
+                            e->vx = 0;
+                            e->zig_timer = 0;
+                            e->pattern = PATT_STRAIGHT;
+                            static short fast_seq = 0;
+                            e->variant = fast_seq % 2;
+                            e->x = (fast_seq % 2 == 0) ? 16 : 256; // Left or right edge
+                            fast_seq++;
+                        }
+                        */
                     }
                 } else {
-                    short allDead = 1;
-                    for (int i = 0; i < MAX_ENEMIES; i++) {
-                        if (g_Enemies[i].active) { allDead = 0; break; }
-                    }
-                    if (allDead) {
-                        g_WaveActive = 0;
-                        g_Level = 1;
+                    if (g_WaveSpawned < g_WaveTotal) {
+                        g_SpawnTimer--;
+                        if (g_SpawnTimer <= 0) {
+                            short type = PickEnemyType(cfg->mask);
+                            SpawnEnemy(type);
+                            g_WaveSpawned++;
+                            g_SpawnTimer = SERIAL_DELAY;
+                        }
+                    } else {
+                        short allDead = 1;
+                        for (int i = 0; i < MAX_ENEMIES; i++) {
+                            if (g_Enemies[i].active) { allDead = 0; break; }
+                        }
+                        if (allDead) {
+                            g_WaveActive = 0;
+                            g_Level = 1;
+                        }
                     }
                 }
             }

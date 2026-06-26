@@ -146,3 +146,233 @@ static CHIP_RAM_DATA UWORD g_LaserSplash1_Accent[24] = {
     0x0780,0x01E0, 0x1E00,0x0078, 0x3C00,0x003C, 0xF000,0x000F,
     0x8000,0x0001, 0x0000,0x0000, 0x0000,0x0000, 0x0000,0x0000
 };
+
+// --- HOMING BULLET GRAPHICS (16x16, oriented with trail opposite to movement) ---
+
+// 0. Moving Up (trail pointing straight Down)
+static CHIP_RAM_DATA UWORD g_HomingShotUp_Mask[16] = {
+    0x0F00, // Row 0: ball (width 8)
+    0x1F80, // Row 1
+    0x3FC0, // Row 2
+    0x3FC0, // Row 3
+    0x3FC0, // Row 4
+    0x1F80, // Row 5
+    0x0F00, // Row 6
+    0x0BD0, // Row 7: transition
+    0x05A0, // Row 8: trail start
+    0x0240, // Row 9
+    0x03C0, // Row 10
+    0x0180, // Row 11
+    0x0180, // Row 12: trail end
+    0x0000,
+    0x0000,
+    0x0000
+};
+static CHIP_RAM_DATA UWORD g_HomingShotUp_Body[16] = {
+    0x0F00, // Row 0: ball
+    0x1F80, // Row 1
+    0x3FC0, // Row 2
+    0x3FC0, // Row 3
+    0x3FC0, // Row 4
+    0x1F80, // Row 5
+    0x0F00, // Row 6
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000
+};
+static CHIP_RAM_DATA UWORD g_HomingShotUp_Accent[16] = {
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0BD0, // Row 7: transition
+    0x05A0, // Row 8: trail start
+    0x0240, // Row 9
+    0x03C0, // Row 10
+    0x0180, // Row 11
+    0x0180, // Row 12: trail end
+    0x0000,
+    0x0000,
+    0x0000
+};
+
+// 1. Moving Down (trail pointing straight Up)
+static CHIP_RAM_DATA UWORD g_HomingShotDn_Mask[16] = {
+    0x0180, // Row 0:    **
+    0x0180, // Row 1:    **
+    0x03C0, // Row 2:   ****
+    0x0240, // Row 3:  *    *
+    0x05A0, // Row 4: * **  *
+    0x0BD0, // Row 5:* *  * * (transition to ball)
+    0x1FF8, // Row 6:********** (ball starts)
+    0x3FFC, // Row 7:************
+    0x3FFC, // Row 8:************
+    0x3FFC, // Row 9:************
+    0x1FF8, // Row 10:**********
+    0x0FF0, // Row 11:********
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000
+};
+static CHIP_RAM_DATA UWORD g_HomingShotDn_Body[16] = {
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x1FF8, // Row 6:**********
+    0x3FFC, // Row 7:************
+    0x3FFC, // Row 8:************
+    0x3FFC, // Row 9:************
+    0x1FF8, // Row 10:**********
+    0x0FF0, // Row 11:********
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000
+};
+static CHIP_RAM_DATA UWORD g_HomingShotDn_Accent[16] = {
+    0x0180, // Row 0:    **
+    0x0180, // Row 1:    **
+    0x03C0, // Row 2:   ****
+    0x0240, // Row 3:  *    *
+    0x05A0, // Row 4: * **  *
+    0x0BD0, // Row 5:* *  * *
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000
+};
+
+// 2. Moving Down-Left (trail pointing Up-Right)
+static CHIP_RAM_DATA UWORD g_HomingShotDL_Mask[16] = {
+    0x000C, // Row 0:       **
+    0x001C, // Row 1:      ***
+    0x0038, // Row 2:     ***
+    0x0064, // Row 3:    **  *
+    0x00D8, // Row 4:   ** **
+    0x07B0, // Row 5: ******* *
+    0x1FF0, // Row 6:**********
+    0x3FE0, // Row 7:***********
+    0x3FE0, // Row 8:***********
+    0x3FE0, // Row 9:***********
+    0x1FF0, // Row 10:**********
+    0x0F60, // Row 11:*********
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000
+};
+static CHIP_RAM_DATA UWORD g_HomingShotDL_Body[16] = {
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x1FF0, // Row 6:**********
+    0x3FE0, // Row 7:***********
+    0x3FE0, // Row 8:***********
+    0x3FE0, // Row 9:***********
+    0x1FF0, // Row 10:**********
+    0x0F60, // Row 11:*********
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000
+};
+static CHIP_RAM_DATA UWORD g_HomingShotDL_Accent[16] = {
+    0x000C, // Row 0:       **
+    0x001C, // Row 1:      ***
+    0x0038, // Row 2:     ***
+    0x0064, // Row 3:    **  *
+    0x00D8, // Row 4:   ** **
+    0x07B0, // Row 5: ******* *
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000
+};
+
+// 3. Moving Down-Right (trail pointing Up-Left)
+static CHIP_RAM_DATA UWORD g_HomingShotDR_Mask[16] = {
+    0x3000, // Row 0: **
+    0x3800, // Row 1: ***
+    0x1C00, // Row 2:  ***
+    0x2600, // Row 3: *  **
+    0x1B00, // Row 4:  ** **
+    0x0DE0, // Row 5: * *******
+    0x0FF8, // Row 6:  **********
+    0x07FC, // Row 7:   ***********
+    0x07FC, // Row 8:   ***********
+    0x07FC, // Row 9:   ***********
+    0x0FF8, // Row 10:  **********
+    0x06F0, // Row 11:   *********
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000
+};
+static CHIP_RAM_DATA UWORD g_HomingShotDR_Body[16] = {
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0FF8, // Row 6:  **********
+    0x07FC, // Row 7:   ***********
+    0x07FC, // Row 8:   ***********
+    0x07FC, // Row 9:   ***********
+    0x0FF8, // Row 10:  **********
+    0x06F0, // Row 11:   *********
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000
+};
+static CHIP_RAM_DATA UWORD g_HomingShotDR_Accent[16] = {
+    0x3000, // Row 0: **
+    0x3800, // Row 1: ***
+    0x1C00, // Row 2:  ***
+    0x2600, // Row 3: *  **
+    0x1B00, // Row 4:  ** **
+    0x0DE0, // Row 5: * *******
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000,
+    0x0000
+};
+
+
+
+
