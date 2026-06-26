@@ -10,6 +10,9 @@ extern int DrawBob32d2Asm(UBYTE* screen_mem, const UWORD* mask,
 extern int DrawBob16d2Asm(UBYTE* screen_mem, const UWORD* mask,
                            const UWORD* dataHi, const UWORD* dataLo,
                            short x, short y, UBYTE planeHi, UBYTE planeLo, UWORD rows);
+extern int DrawBob48d2Asm(UBYTE* screen_mem, const UWORD* mask,
+                           const UWORD* dataHi, const UWORD* dataLo,
+                           short x, short y, UBYTE planeHi, UBYTE planeLo);
 extern int DrawForceFieldMaskAsm(void* screen_mem, short x, short y,
                                   const UWORD* mask, int planeIdx);
 extern int DrawForceFieldMask2Asm(void* screen_mem, short x, short y,

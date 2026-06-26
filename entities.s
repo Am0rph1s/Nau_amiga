@@ -226,10 +226,17 @@ AsmCollideShotsEnemies:
         cmp.w   TENEMY_X(a2),d0
         ble     .ase_next_shot
 
-        | shot_x < enemy_x + ENEMY_W (24)
+        | shot_x < enemy_x + ENEMY_W (24 or 48)
         move.w  TSHOT_X(a3),d0
         move.w  TENEMY_X(a2),d1
+        move.w  TENEMY_TYPE(a2),d2
+        cmpi.w  #2,d2              | ENEMY_TYPE_BIG is 2
+        beq.s   .ase_x48
         add.w   #24,d1
+        bra.s   .ase_check_x
+.ase_x48:
+        add.w   #48,d1
+.ase_check_x:
         cmp.w   d1,d0
         bge     .ase_next_shot
 
@@ -239,10 +246,17 @@ AsmCollideShotsEnemies:
         cmp.w   TENEMY_Y(a2),d0
         ble     .ase_next_shot
 
-        | shot_y < enemy_y + ENEMY_H (24)
+        | shot_y < enemy_y + ENEMY_H (24 or 48)
         move.w  TSHOT_Y(a3),d0
         move.w  TENEMY_Y(a2),d1
+        move.w  TENEMY_TYPE(a2),d2
+        cmpi.w  #2,d2              | ENEMY_TYPE_BIG is 2
+        beq.s   .ase_y48
         add.w   #24,d1
+        bra.s   .ase_check_y
+.ase_y48:
+        add.w   #48,d1
+.ase_check_y:
         cmp.w   d1,d0
         bge     .ase_next_shot
 
@@ -324,7 +338,14 @@ AsmCollideEnemiesShip:
         move.w  g_ShipX,d0
         addq.w  #3,d0             | g_ShipX + SHIP_HIT_OX
         move.w  TENEMY_X(a2),d1
-        add.w   #24,d1            | e->x + ENEMY_W
+        move.w  TENEMY_TYPE(a2),d2
+        cmpi.w  #2,d2              | ENEMY_TYPE_BIG is 2
+        beq.s   .aces_x48
+        add.w   #24,d1
+        bra.s   .aces_chk_x
+.aces_x48:
+        add.w   #48,d1
+.aces_chk_x:
         cmp.w   d0,d1
         ble     .aces_next
 
@@ -339,7 +360,14 @@ AsmCollideEnemiesShip:
         move.w  g_ShipY,d0
         addq.w  #6,d0             | g_ShipY + SHIP_HIT_OY
         move.w  TENEMY_Y(a2),d1
-        add.w   #24,d1            | e->y + ENEMY_H
+        move.w  TENEMY_TYPE(a2),d2
+        cmpi.w  #2,d2              | ENEMY_TYPE_BIG is 2
+        beq.s   .aces_y48
+        add.w   #24,d1
+        bra.s   .aces_chk_y
+.aces_y48:
+        add.w   #48,d1
+.aces_chk_y:
         cmp.w   d0,d1
         ble     .aces_next
 

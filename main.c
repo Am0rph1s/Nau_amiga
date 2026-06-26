@@ -16,13 +16,14 @@
 #include "blitter.h"
 #include "gfx_enemy_basic24.h"
 #include "gfx_enemy_fast16.h"
+#include "gfx_enemy_laser48.h"
 #include "gfx_bg_tiles.h"
 
 // ============================================================================
 // SYSTEM
 // ============================================================================
 
-struct ExecBase    *SysBase;
+struct ExecBase    *SysBase __attribute__((externally_visible));
 volatile struct Custom *custom;
 struct DosLibrary  *DOSBase;
 struct GfxBase     *GfxBase;
@@ -132,6 +133,7 @@ static UWORD* g_SprDataB = 0;
 static UWORD* g_SprDataActive = 0;
 static UWORD* g_SprDataBuild = 0;
 static UWORD* g_SprDataToLoad = 0;
+// Laser is drawn by blitter (DrawBob16_2bpl), no chip RAM sprite arrays needed.
 static short g_SprChannelShotActive[SPR_MAX_CHANNELS];
 static short g_SprChannelShotBuild[SPR_MAX_CHANNELS];
 
@@ -369,6 +371,93 @@ static void DrawBob32_2bpl(UBYTE* screen_mem,
             if (base < (ROW_BYTES/2) * SCREEN_H) p3rd[base] &= ~mv0;
             if (wx + 1 < ROW_BYTES / 2) p3rd[base+1] &= ~mv1;
             if (wx + 2 < ROW_BYTES / 2) p3rd[base+2] &= ~mv2;
+        }
+    }
+}
+
+static void DrawBob48_2bpl(UBYTE* screen_mem,
+                           const UWORD* mask, const UWORD* dataHi, const UWORD* dataLo,
+                           short x, short y, UBYTE planeHi, UBYTE planeLo) {
+    if (x <= -48 || x >= SCREEN_W || y <= -48 || y >= SCREEN_H) return;
+    UWORD rows  = 48;
+    const UWORD* m = mask;
+    const UWORD* dh = dataHi;
+    const UWORD* dl = dataLo;
+    if (y < HUD_H) {
+        UWORD skip = (UWORD)(HUD_H - y);
+        m += skip*3; dh += skip*3; dl += skip*3;
+        rows = (rows > skip) ? rows - skip : 0;
+        y = HUD_H;
+    } else {
+        if (!DrawBob48d2Asm(screen_mem, mask, dataHi, dataLo, x, y, planeHi, planeLo))
+            return;
+    }
+    if (y + (short)rows > SCREEN_H) rows = (UWORD)(SCREEN_H - y);
+    if (rows == 0) return;
+
+    UWORD wx = (UWORD)(x < 0 ? 0 : x) >> 4;
+    UWORD shift = (UWORD)(x & 15);
+    for (UWORD row = 0; row < rows; row++) {
+        UWORD m0 = m[row*3],   m1 = m[row*3+1],   m2 = m[row*3+2];
+        UWORD h0 = dh[row*3],  h1 = dh[row*3+1],  h2 = dh[row*3+2];
+        UWORD l0 = dl[row*3],  l1 = dl[row*3+1],  l2 = dl[row*3+2];
+
+        UWORD mv0 = m0 >> shift;
+        UWORD mv1 = shift ? (UWORD)((m0 << (16-shift)) | (m1 >> shift)) : m1;
+        UWORD mv2 = shift ? (UWORD)((m1 << (16-shift)) | (m2 >> shift)) : m2;
+        UWORD mv3 = shift ? (UWORD)(m2 << (16-shift)) : 0;
+
+        UWORD hv0 = h0 >> shift;
+        UWORD hv1 = shift ? (UWORD)((h0 << (16-shift)) | (h1 >> shift)) : h1;
+        UWORD hv2 = shift ? (UWORD)((h1 << (16-shift)) | (h2 >> shift)) : h2;
+        UWORD hv3 = shift ? (UWORD)(h2 << (16-shift)) : 0;
+
+        UWORD lv0 = l0 >> shift;
+        UWORD lv1 = shift ? (UWORD)((l0 << (16-shift)) | (l1 >> shift)) : l1;
+        UWORD lv2 = shift ? (UWORD)((l1 << (16-shift)) | (l2 >> shift)) : l2;
+        UWORD lv3 = shift ? (UWORD)(l2 << (16-shift)) : 0;
+
+        UWORD ry   = (UWORD)y + row;
+        UWORD base = ry * (ROW_BYTES / 2) + wx;
+
+        // Write planeHi (PF2 bit 0)
+        UWORD* phi = (UWORD*)(screen_mem + planeHi * PLANE_BYTES);
+        if (base < (ROW_BYTES/2) * SCREEN_H) {
+            phi[base] = (UWORD)((phi[base] & ~mv0) | (hv0 & mv0));
+        }
+        if (wx + 1 < ROW_BYTES / 2) {
+            phi[base+1] = (UWORD)((phi[base+1] & ~mv1) | (hv1 & mv1));
+        }
+        if (wx + 2 < ROW_BYTES / 2) {
+            phi[base+2] = (UWORD)((phi[base+2] & ~mv2) | (hv2 & mv2));
+        }
+        if (wx + 3 < ROW_BYTES / 2) {
+            phi[base+3] = (UWORD)((phi[base+3] & ~mv3) | (hv3 & mv3));
+        }
+
+        // Write planeLo (PF2 bit 1)
+        UWORD* plo = (UWORD*)(screen_mem + planeLo * PLANE_BYTES);
+        if (base < (ROW_BYTES/2) * SCREEN_H) {
+            plo[base] = (UWORD)((plo[base] & ~mv0) | (lv0 & mv0));
+        }
+        if (wx + 1 < ROW_BYTES / 2) {
+            plo[base+1] = (UWORD)((plo[base+1] & ~mv1) | (lv1 & mv1));
+        }
+        if (wx + 2 < ROW_BYTES / 2) {
+            plo[base+2] = (UWORD)((plo[base+2] & ~mv2) | (lv2 & mv2));
+        }
+        if (wx + 3 < ROW_BYTES / 2) {
+            plo[base+3] = (UWORD)((plo[base+3] & ~mv3) | (lv3 & mv3));
+        }
+
+        // Clear 3rd plane (BPL6/plane 5) in mask area
+        {
+            UBYTE pl3rd = (UBYTE)(1 + 3 + 5 - planeHi - planeLo);
+            UWORD* p3rd = (UWORD*)(screen_mem + pl3rd * PLANE_BYTES);
+            if (base < (ROW_BYTES/2) * SCREEN_H) p3rd[base] &= ~mv0;
+            if (wx + 1 < ROW_BYTES / 2) p3rd[base+1] &= ~mv1;
+            if (wx + 2 < ROW_BYTES / 2) p3rd[base+2] &= ~mv2;
+            if (wx + 3 < ROW_BYTES / 2) p3rd[base+3] &= ~mv3;
         }
     }
 }
@@ -823,10 +912,10 @@ static THiScore *g_HiScores;
 // ============================================================================
 
 static const TLevelConfig g_Levels[ENDGAME_FINAL_LEVEL] = {
-    /* 1*/  { 1, 8, LMASK_FAST,                       0 },
-    /* 2*/  { 3, 4, LMASK_BASIC|LMASK_FAST,            0 },
-    /* 3*/  { 4, 3, LMASK_BASIC|LMASK_FAST,            0 },
-    /* 4*/  { 4, 4, LMASK_BASIC|LMASK_FAST,            0 },
+    /* 1*/  { 18, 1, LMASK_FAST|LMASK_BIG,             0 },
+    /* 2*/  { 3, 4, LMASK_BASIC|LMASK_FAST|LMASK_BIG,            0 },
+    /* 3*/  { 4, 3, LMASK_BASIC|LMASK_FAST|LMASK_BIG,            0 },
+    /* 4*/  { 4, 4, LMASK_BASIC|LMASK_FAST|LMASK_BIG,            0 },
     /* 5*/  { 1, 1, 0,                                 LCFG_F_BOSS1 },
     /* 6*/  { 4, 4, LMASK_BASIC|LMASK_FAST,            0 },
     /* 7*/  { 4, 4, LMASK_BASIC|LMASK_FAST,            0 },
@@ -929,9 +1018,9 @@ static void ResetGameSession() {
 // ============================================================================
 
 static short PickEnemyType(unsigned char mask) {
-    short available[2];
+    short available[3];
     short count = 0;
-    for (short t = 0; t < 2; t++) {
+    for (short t = 0; t < 3; t++) {
         if (mask & (1 << t)) available[count++] = t;
     }
     if (count == 0) return -1;
@@ -984,6 +1073,25 @@ static void UpdateEnemies(void) {
                     e->vy = -3;
                 }
             }
+        } else if (e->type == ENEMY_TYPE_BIG) {
+            if (e->zig_timer == 0) {
+                // Descend phase
+                e->vx = 0;
+                e->vy = 2;
+                if (e->y >= 64) {
+                    e->zig_timer = 1; // Switch to patrol phase
+                    e->vy = 0;
+                    e->vx = (e->variant == 0) ? 2 : -2;
+                }
+            } else {
+                // Patrol phase
+                e->vy = 0;
+                if (e->vx > 0 && e->x >= SCREEN_W - 48 - 16) { // 256
+                    e->vx = -2;
+                } else if (e->vx < 0 && e->x <= 16) {
+                    e->vx = 2;
+                }
+            }
         } else {
             e->vx = 0;
             e->vy = ENEMY_SPEED_BASIC;
@@ -993,7 +1101,16 @@ static void UpdateEnemies(void) {
         e->y += e->vy;
 
         // Check if exited screen boundaries
-        if (e->y > GAME_H || e->y < -24 || e->x < -24 || e->x > SCREEN_W + 24) {
+        short limit_y_max = GAME_H;
+        short limit_y_min = -24;
+        short limit_x_min = -24;
+        short limit_x_max = SCREEN_W + 24;
+        if (e->type == ENEMY_TYPE_BIG) {
+            limit_y_min = -48;
+            limit_x_min = -48;
+            limit_x_max = SCREEN_W + 48;
+        }
+        if (e->y > limit_y_max || e->y < limit_y_min || e->x < limit_x_min || e->x > limit_x_max) {
             e->active = 0;
             g_WaveKilled++;
         }
@@ -1071,9 +1188,11 @@ static void CollideShotsEnemies(void) {
             TShot* shot = &g_Shots[s_idx];
             if (!shot->active) continue;
 
-            // Collision check (AABB: Shot is 4x16, Enemy is 24x24)
-            if (shot->x + 4 > e->x && shot->x < e->x + ENEMY_W &&
-                shot->y + 16 > e->y && shot->y < e->y + ENEMY_H) {
+            // Collision check (AABB: Shot is 4x16, Enemy is 24x24 or 48x48)
+            short ew = (e->type == ENEMY_TYPE_BIG) ? ENEMY_W_BIG : ENEMY_W;
+            short eh = (e->type == ENEMY_TYPE_BIG) ? ENEMY_H_BIG : ENEMY_H;
+            if (shot->x + 4 > e->x && shot->x < e->x + ew &&
+                shot->y + 16 > e->y && shot->y < e->y + eh) {
                 
                 // Collision detected! Deactivate player shot
                 shot->active = 0;
@@ -1089,7 +1208,9 @@ static void CollideShotsEnemies(void) {
                     g_WaveKilled++;
 
                     // Score update
-                    short pts = (e->type == ENEMY_TYPE_FAST) ? ENEMY_SCORE_FAST : ENEMY_SCORE_BASIC;
+                    short pts = ENEMY_SCORE_BASIC;
+                    if (e->type == ENEMY_TYPE_FAST) pts = ENEMY_SCORE_FAST;
+                    else if (e->type == ENEMY_TYPE_BIG) pts = ENEMY_SCORE_BIG;
                     g_Score += pts;
 
                     // Extra life check
@@ -1098,8 +1219,10 @@ static void CollideShotsEnemies(void) {
                         g_NextLifeAt += EXTRA_LIFE_EVERY;
                     }
 
-                    // Spawn explosion
-                    SpawnExplosion(e->x, e->y, EXP_KIND_ENEMY);
+                    // Spawn explosion (center explosion for big enemies)
+                    short exp_x = e->x + (ew >> 1) - 12;
+                    short exp_y = e->y + (eh >> 1) - 12;
+                    SpawnExplosion(exp_x, exp_y, EXP_KIND_ENEMY);
 
                     // Revenge burst of 3 fast aimed bullets (only if killed by SAME polarity shot)
                     if (same_polarity && e->type == ENEMY_TYPE_FAST) {
@@ -1159,23 +1282,83 @@ static void SpawnEnemy(short type) {
     if (idx < 0) return;
     TEnemy* e = &g_Enemies[idx];
     e->active = 1;
-    e->type = ENEMY_TYPE_FAST;
-    e->health = 4; // Fast enemies have 4 health points (Ikaruga mechanic)
-    e->y = -16;
-    e->vx = 0;
-    e->vy = 3;
     e->fire_cd = 0;
-    e->zig_timer = 0;
+    e->zig_timer = 0; // used as phase for big enemy: 0 = descend, 1 = patrol
     e->pattern = PATT_STRAIGHT;
 
-    if (g_WaveSpawned < 4) {
-        // Fast A (Left side)
-        e->x = 48;
-        e->variant = 0;
+    if (g_Level == 1) {
+        if (g_WaveSpawned < 8) {
+            e->type = ENEMY_TYPE_FAST;
+            e->health = 4;
+            e->y = -16;
+            e->vy = 3;
+            e->vx = 0;
+            e->x = 48;
+            e->variant = 0; // Polarity A
+        } else if (g_WaveSpawned < 16) {
+            e->type = ENEMY_TYPE_FAST;
+            e->health = 4;
+            e->y = -16;
+            e->vy = 3;
+            e->vx = 0;
+            e->x = SCREEN_W - 48 - 16; // 256
+            e->variant = 1; // Polarity B
+        } else if (g_WaveSpawned == 16) {
+            e->type = ENEMY_TYPE_BIG;
+            e->health = 40;
+            e->y = -48;
+            e->vy = 2;
+            e->vx = 0;
+            e->x = 16;
+            e->variant = 0; // Polarity A, Left
+        } else {
+            e->type = ENEMY_TYPE_BIG;
+            e->health = 40;
+            e->y = -48;
+            e->vy = 2;
+            e->vx = 0;
+            e->x = SCREEN_W - 48 - 16; // 256
+            e->variant = 1; // Polarity B, Right
+        }
     } else {
-        // Fast B (Right side)
-        e->x = SCREEN_W - 48 - 16; // 256
-        e->variant = 1;
+        e->type = type;
+        if (type == ENEMY_TYPE_BIG) {
+            e->health = 40;
+            e->y = -48;
+            e->vy = 2;
+            e->vx = 0;
+            if (g_WaveSpawned % 2 == 0) {
+                e->x = 16;
+                e->variant = 0; // Polarity A
+            } else {
+                e->x = SCREEN_W - 48 - 16; // 256
+                e->variant = 1; // Polarity B
+            }
+        } else if (type == ENEMY_TYPE_FAST) {
+            e->health = 4;
+            e->y = -16;
+            e->vy = 3;
+            e->vx = 0;
+            if (g_WaveSpawned < 4) {
+                e->x = 48;
+                e->variant = 0;
+            } else {
+                e->x = SCREEN_W - 48 - 16; // 256
+                e->variant = 1;
+            }
+        } else {
+            e->health = 2;
+            e->y = -24;
+            e->vy = ENEMY_SPEED_BASIC;
+            e->vx = 0;
+            if (g_WaveSpawned % 2 == 0) {
+                e->x = 48;
+                e->variant = 0;
+            } else {
+                e->x = SCREEN_W - 24 - 16; // 280
+                e->variant = 1;
+            }
+        }
     }
 }
 
@@ -1279,7 +1462,7 @@ static __attribute__((interrupt)) void VBlankHandler() {
     custom->intreq = (1<<INTB_VERTB); // twice for A4000
     // Load the sprite data that was paired with the active Copper list for this frame
     if (g_SprDataToLoad) {
-        for (int s = 0; s < 8; s++) {
+        for (int s = 2; s < 8; s++) {
             ULONG addr = (ULONG)(g_SprDataToLoad + s * SPR_CHAN_WORDS);
             volatile USHORT* ptr = (volatile USHORT*)(0xDFF120 + s * 4);
             ptr[0] = (USHORT)(addr >> 16);
@@ -1308,12 +1491,21 @@ static void BuildCopperListEx(USHORT* cop, const UBYTE** hud_planes,
     // Wait for VBlank (line 0) so all registers are set before visible area (line 44)
     *cop++ = 0x0001; *cop++ = 0xFFFE;
 
+    // Load active sprite pointers inside Copper list at vertical blanking (line 0)
+    if (g_SprDataToLoad) {
+        for (int s = 2; s < 8; s++) {
+            ULONG addr = (ULONG)(g_SprDataToLoad + s * SPR_CHAN_WORDS);
+            *cop++ = (USHORT)(0x120 + s * 4);     *cop++ = (UWORD)(addr >> 16);
+            *cop++ = (USHORT)(0x120 + s * 4 + 2); *cop++ = (UWORD)addr;
+        }
+    }
+
     cop = copSetReg(cop, 0x092, fw);                              // DDFSTRT
     cop = copSetReg(cop, 0x094, fw + (((width>>4)-1)<<3));       // DDFSTOP
     cop = copSetReg(cop, 0x08E, x + (y<<8));                      // DIWSTRT
     cop = copSetReg(cop, 0x090, (xstop-256) + ((ystop-256)<<8)); // DIWSTOP
 
-    cop = copSetReg(cop, 0x100, (6<<12) | (1<<10));               // BPLCON0
+    cop = copSetReg(cop, 0x100, (6<<12) | (1<<10) | 1);               // BPLCON0 (dual playfield, 6 planes, sprite enable)
     cop = copSetReg(cop, 0x102, 0);                                // BPLCON1
     cop = copSetReg(cop, 0x104, (1<<6) | (4<<3) | (4<<0));        // BPLCON2 (PF2PRI=1, PF2P=4, PF1P=4 -> all sprites on top)
     cop = copSetReg(cop, 0x108, 0);                                // BPL1MOD
@@ -1468,6 +1660,8 @@ static void UpdateSpriteData(UWORD* sprData) {
         }
     }
 }
+
+
 
 static const UBYTE font_5x7[22][7] = {
     {0x3E,0x62,0x62,0x62,0x62,0x62,0x3E}, // 0
@@ -1688,6 +1882,40 @@ static void RenderFrame(UBYTE* screen_mem) {
                         }
                     }
                     break;
+                case ENEMY_TYPE_BIG:
+                    {
+                        // Draw the 48x48 enemy body
+                        if (e->variant == 0) {
+                            // Polarity A: White/Black/Blue on BPL2 & BPL6 (planes 1 and 5)
+                            DrawBob48_2bpl(screen_mem, g_EnemyLaser48Mask,
+                                           g_EnemyLaser48Hi, g_EnemyLaser48Lo,
+                                           e->x, e->y, 1, 5);
+                        } else {
+                            // Polarity B: White/Black/Red on BPL2 & BPL4 (planes 1 and 3)
+                            DrawBob48_2bpl(screen_mem, g_EnemyLaser48InvMask,
+                                           g_EnemyLaser48InvHi, g_EnemyLaser48InvLo,
+                                           e->x, e->y, 1, 3);
+                        }
+                        // Draw the laser beam below the enemy using blitter BOB
+                        // The blitter reuses the same 1-word row for all scanlines (BLTAMOD=-2)
+                        short laser_x = e->x + 16; // center of 48px enemy, left-align 16px laser
+                        short laser_y = e->y + ENEMY_H_BIG; // start just below the enemy
+                        // Clamp to game area — 1-element arrays cannot survive pointer advance in the HUD clipping path
+                        if (laser_y < HUD_H) laser_y = HUD_H;
+                        short laser_rows = SCREEN_H - laser_y;
+                        if (laser_y < SCREEN_H && laser_rows > 0) {
+                            if (e->variant == 0) {
+                                // Polarity A: body=white(BPL2=1), accent=blue(BPL6=5)
+                                DrawBob16_2bpl(screen_mem, g_LaserMask, g_LaserBodyA, g_LaserAccentA,
+                                               laser_x, laser_y, 1, 5, (UWORD)laser_rows);
+                            } else {
+                                // Polarity B: body=dark(BPL2=1), accent=red(BPL4=3)
+                                DrawBob16_2bpl(screen_mem, g_LaserMask, g_LaserBodyB, g_LaserAccentB,
+                                               laser_x, laser_y, 1, 3, (UWORD)laser_rows);
+                            }
+                        }
+                    }
+                    break;
                 default:
                     break;  // BOSS and unknown types handled elsewhere
             }
@@ -1816,6 +2044,7 @@ int main() {
         g_SprDataActive = g_SprDataA;
         g_SprDataBuild = g_SprDataB;
         g_SprDataToLoad = g_SprDataA;
+
         for (int c = 0; c < SPR_MAX_CHANNELS; c++) {
             g_SprChannelShotActive[c] = -1;
             g_SprChannelShotBuild[c] = -1;
@@ -1828,6 +2057,8 @@ int main() {
     if (!copper1 || !copper2) { FreeMem(screen_mem, buf_size * 2); CloseLibrary((struct Library*)DOSBase); CloseLibrary((struct Library*)GfxBase); Exit(0); }
     USHORT* cop_show  = copper1;  // currently displayed by Copper
     USHORT* cop_build = copper2;  // being built by CPU
+
+    InitLaserGfx();  // Fill laser beam pixel arrays (256 rows, all identical)
 
     TakeSystem();
     WaitVbl();
@@ -1844,7 +2075,7 @@ int main() {
     custom->copjmp1 = 0x7fff;
     custom->dmacon = DMAF_SETCLR | DMAF_MASTER | DMAF_RASTER | DMAF_COPPER | DMAF_BLITTER | DMAF_SPRITE;
 
-    // Init sprite pointers (VBlank handler will update per frame)
+    // Init sprite pointers for ALL 8 channels (0+1 are unused by laser now, must be set off-screen)
     if (g_SprDataActive) {
         for (int s = 0; s < 8; s++) {
             volatile USHORT* ptr = (volatile USHORT*)(0xDFF120 + s*4);
@@ -1853,7 +2084,7 @@ int main() {
             ptr[1] = (USHORT)addr;
             volatile USHORT* pos = (volatile USHORT*)(0xDFF140 + s*8);
             pos[0] = ((USHORT)(300 & 0xFF) << 8);
-            pos[1] = (s & 1) ? 0x0000 : 0x0084;  // ATT=0 for odd, SV8=1 (bit 7 and bit 2) for even -> VSTART=300
+            pos[1] = (s & 1) ? 0x0000 : 0x0084;  // even: SV8=1 -> VSTART=511, odd: ATT=0
         }
     }
 
@@ -2061,7 +2292,19 @@ int main() {
                         short type = PickEnemyType(cfg->mask);
                         SpawnEnemy(type);
                         g_WaveSpawned++;
-                        g_SpawnTimer = SERIAL_DELAY;
+                        if (g_Level == 1) {
+                            if (g_WaveSpawned == 8) {
+                                g_SpawnTimer = 60; // Delay before the second fast stream (80 frames)
+                            } else if (g_WaveSpawned == 16) {
+                                g_SpawnTimer = 100; // 100 frames pause before first big enemy
+                            } else if (g_WaveSpawned == 17) {
+                                g_SpawnTimer = 150; // 150 frames pause before second big enemy
+                            } else {
+                                g_SpawnTimer = SERIAL_DELAY;
+                            }
+                        } else {
+                            g_SpawnTimer = SERIAL_DELAY;
+                        }
                     }
                 } else {
                     short allDead = 1;

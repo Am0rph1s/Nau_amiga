@@ -866,6 +866,170 @@ DrawBob16d2Asm:
         rts
 
 | ============================================================
+| int DrawBob48d2Asm(UBYTE* screen_mem, const UWORD* mask,
+|                    const UWORD* dataHi, const UWORD* dataLo,
+|                    short x, short y, UBYTE planeHi, UBYTE planeLo)
+|
+| Fast-path for 48x48 bobs with 2 data planes + clear plane5.
+| Returns 0 on success, 1 if needs fallback.
+| Stack: sp+48=screen, +52=mask, +56=dataHi, +60=dataLo, +66=x, +70=y,
+|        +74=planeHi, +78=planeLo
+| ============================================================
+        .global DrawBob48d2Asm
+DrawBob48d2Asm:
+        movem.l d2-d7/a2-a6,-(sp)      | 11 regs = 44 bytes
+
+        move.l  48(sp),a2               | a2 = screen_mem
+        move.l  52(sp),a3               | a3 = mask
+        move.l  56(sp),a4               | a4 = dataHi
+        move.l  60(sp),a5               | a5 = dataLo
+        move.w  66(sp),d7               | d7 = x
+        move.w  70(sp),d6               | d6 = y
+        move.w  74(sp),d5               | d5 = planeHi
+        move.w  78(sp),d4               | d4 = planeLo
+
+        | Fast-path checks
+        tst.w   d7
+        blt     .db482_fail
+        cmpi.w  #272,d7
+        bgt     .db482_fail
+        tst.w   d6
+        blt     .db482_fail
+        move.w  d6,d0
+        addi.w  #48,d0
+        cmpi.w  #256,d0
+        bgt     .db482_fail
+
+        | Calculate shift value (x & 15) -> d1
+        move.w  d7,d1
+        andi.w  #15,d1                  | d1 = shift
+        move.w  d1,d0                   | save shift in d0
+
+        | Calculate row byte offset = y * 40 + (x >> 4) * 2 -> d1
+        move.w  d7,d2
+        lsr.w   #4,d2
+        add.w   d2,d2                   | d2 = wx * 2
+
+        moveq   #0,d1
+        move.w  d6,d1
+        lsl.w   #5,d1                   | y * 32
+        move.w  d6,d7
+        lsl.w   #3,d7                   | y * 8
+        add.w   d7,d1                   | y * 40
+        add.w   d2,d1                   | d1 = row byte offset
+
+        | Get plane pointers (a0, a1, a6)
+        | planeHi -> a0
+        move.w  d5,d7
+        mulu    #10240,d7
+        add.l   a2,d7
+        add.l   d1,d7
+        move.l  d7,a0
+
+        | planeLo -> a1
+        move.w  d4,d7
+        mulu    #10240,d7
+        add.l   a2,d7
+        add.l   d1,d7
+        move.l  d7,a1
+
+        | pl3rd -> a6
+        moveq   #9,d7
+        sub.w   d5,d7
+        sub.w   d4,d7
+        mulu    #10240,d7
+        add.l   a2,d7
+        add.l   d1,d7
+        move.l  d7,a6
+
+        | Now reuse a2 for CUSTOM
+        lea     CUSTOM,a2
+
+        | Wait for blitter to be idle
+1:      btst    #6,DMACONR(a2)
+        bne     1b
+
+        | Set up common blitter registers
+        move.w  #0xFFFF,BLTAFWM(a2)
+        move.w  #0x0000,BLTALWM(a2)
+        move.w  #-2,BLTAMOD(a2)
+        move.w  #32,BLTCMOD(a2)
+        move.w  #32,BLTDMOD(a2)
+
+        | --- BLIT 1: Clear pl3rd in mask area (D = C & ~A) ---
+2:      btst    #6,DMACONR(a2)
+        bne     2b
+
+        move.w  d0,d7                   | shift
+        lsl.w   #8,d7
+        lsl.w   #4,d7                   | d7 = shift << 12
+        move.w  d7,d1
+        or.w    #0x0B0A,d7              | channels A, C, D active, minterm = 0x0A
+        move.w  d7,BLTCON0(a2)
+        move.w  d1,BLTCON1(a2)
+
+        move.l  a3,BLTAPTH(a2)          | mask (A)
+        move.l  a6,BLTCPTH(a2)          | pl3rd (C)
+        move.l  a6,BLTDPTH(a2)          | pl3rd (D)
+
+        move.w  #0x0C04,BLTSIZE(a2)     | 48 rows, 4 words
+
+        | --- BLIT 2: Draw dataHi to planeHi (D = (A & B) | (C & ~A)) ---
+3:      btst    #6,DMACONR(a2)
+        bne     3b
+
+        move.w  #-2,BLTBMOD(a2)
+
+4:      btst    #6,DMACONR(a2)
+        bne     4b
+
+        move.w  d0,d7                   | shift
+        lsl.w   #8,d7
+        lsl.w   #4,d7
+        move.w  d7,d1
+        or.w    #0x0FCA,d7              | channels A, B, C, D active, minterm = 0xCA
+        move.w  d7,BLTCON0(a2)
+        move.w  d1,BLTCON1(a2)
+
+        move.l  a3,BLTAPTH(a2)          | mask (A)
+        move.l  a4,BLTBPTH(a2)          | dataHi (B)
+        move.l  a0,BLTCPTH(a2)          | planeHi (C)
+        move.l  a0,BLTDPTH(a2)          | planeHi (D)
+
+        move.w  #0x0C04,BLTSIZE(a2)
+
+        | --- BLIT 3: Draw dataLo to planeLo (D = (A & B) | (C & ~A)) ---
+5:      btst    #6,DMACONR(a2)
+        bne     5b
+
+        move.w  d0,d7
+        lsl.w   #8,d7
+        lsl.w   #4,d7
+        move.w  d7,d1
+        or.w    #0x0FCA,d7
+        move.w  d7,BLTCON0(a2)
+        move.w  d1,BLTCON1(a2)
+
+        move.l  a3,BLTAPTH(a2)          | mask (A)
+        move.l  a5,BLTBPTH(a2)          | dataLo (B)
+        move.l  a1,BLTCPTH(a2)          | planeLo (C)
+        move.l  a1,BLTDPTH(a2)          | planeLo (D)
+
+        move.w  #0x0C04,BLTSIZE(a2)
+
+6:      btst    #6,DMACONR(a2)
+        bne     6b
+
+        moveq   #0,d0
+        bra.s   .db482_exit
+
+.db482_fail:
+        moveq   #1,d0
+.db482_exit:
+        movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+| ============================================================
 | int DrawForceFieldMaskAsm(void* screen_mem, short x, short y,
 |                           const UWORD* mask, int planeIdx)
 |

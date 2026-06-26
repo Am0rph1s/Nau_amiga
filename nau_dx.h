@@ -50,15 +50,19 @@
 // --- Enemy types ------------------------------------------------------------
 #define ENEMY_TYPE_BASIC    0
 #define ENEMY_TYPE_FAST     1
+#define ENEMY_TYPE_BIG      2
 
 #define ENEMY_SPEED_BASIC   3
 #define ENEMY_SPEED_FAST    4
 
 #define ENEMY_SCORE_BASIC   10
 #define ENEMY_SCORE_FAST    20
+#define ENEMY_SCORE_BIG     50
 
 #define ENEMY_W             24
 #define ENEMY_H             24
+#define ENEMY_W_BIG         48
+#define ENEMY_H_BIG         48
 #define MAX_ENEMIES         12
 
 // --- Movement patterns ------------------------------------------------------
@@ -110,6 +114,7 @@
 
 #define LMASK_BASIC     (1<<0)
 #define LMASK_FAST      (1<<1)
+#define LMASK_BIG       (1<<2)
 #define LCFG_F_BOSS1    1
 #define LCFG_F_BOSS2    2
 

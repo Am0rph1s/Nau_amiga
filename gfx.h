@@ -71,3 +71,27 @@ static const UWORD g_Exp3Data[16] = {
 // Lookup tables for drawing
 static const UWORD* const g_ExpMasks[4] = { g_Exp0Mask, g_Exp1Mask, g_Exp2Mask, g_Exp3Mask };
 static const UWORD* const g_ExpData[4]  = { g_Exp0Data, g_Exp1Data, g_Exp2Data, g_Exp3Data };
+
+// --- LASER BEAM (16px wide, 256-row arrays for blitter BOB DrawBob16_2bpl) ---
+// Polarity A (white/blue): outer glow 0x3FFC (14px), inner core 0x0FF0 (12px)
+//   planeHi=1 (BPL2, white body), planeLo=5 (BPL6, blue accent)
+// Polarity B (black/red):  outer glow 0x3FFC (14px), inner core 0x0FF0 (12px)
+//   planeHi=1 (BPL2, dark body), planeLo=3 (BPL4, red accent)
+// 256 rows ensures the C fallback (if ASM fails) never reads out-of-bounds.
+// All rows are identical; blitter BLTAMOD=-2 re-reads the same word anyway.
+// Call InitLaserGfx() once at startup to fill the arrays.
+static CHIP_RAM_DATA UWORD g_LaserMask[256];
+static CHIP_RAM_DATA UWORD g_LaserBodyA[256];
+static CHIP_RAM_DATA UWORD g_LaserAccentA[256];
+static CHIP_RAM_DATA UWORD g_LaserBodyB[256];
+static CHIP_RAM_DATA UWORD g_LaserAccentB[256];
+
+static void InitLaserGfx(void) {
+    for (int r = 0; r < 256; r++) {
+        g_LaserMask[r]    = 0x3FFC; // 14-pixel-wide mask
+        g_LaserBodyA[r]   = 0x0FF0; // 12px bright core  (white)
+        g_LaserAccentA[r] = 0x3FFC; // 14px outer glow   (blue)
+        g_LaserBodyB[r]   = 0x0FF0; // 12px core         (black/dark)
+        g_LaserAccentB[r] = 0x3FFC; // 14px outer glow   (red)
+    }
+}
